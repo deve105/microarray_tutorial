@@ -15,6 +15,8 @@ isLog2Transformed <- function(data) {
     return(!shouldBeLogged)
 }
 
+
+
 #--------------------------------------------------------
 # Part 2: Obtaining metadata and raw data
 #--------------------------------------------------------
@@ -31,12 +33,21 @@ if (!dir.exists(paste0(".temp/", id))) {
 
 # Obtaining Metadata
 meta <- getGEO(id, GSEMatrix = TRUE, destdir = ".temp")
-meta <- meta[[1]]
 
-head(fData(meta))
-head(pData(meta))
+methods(class=class(meta))
+
+meta <- meta[[1]]
+meta
+head(fData(meta), 2)
+head(exprs(meta), 2)
+pData(meta)
+fData(meta)
 colnames(exprs(meta))
 dim(meta)
+
+head(pData(meta), 5)
+names(pData(meta))
+pData(meta)$characteristics_ch1
 
 # Metadata wrangling
 pd <- pData(meta) |>
@@ -55,6 +66,8 @@ pd <- pData(meta) |>
         str_detect(atl_subtype, "Healthy") ~ "HD",
         .default = NA
     ))
+
+pd7 = pd 
 
 ## Download all the files in the .temp of this environment
 for (i in 1:length(pd7$supplementary_file)) {
@@ -80,9 +93,10 @@ for (i in 1:length(pd7$supplementary_file)) {
 # Part 3: Capturing targets
 #--------------------------------------------------------
 # Exploring the structure of one file
-con <- gzfile(file.path("/Users/denriquez/Documents/GitHub/microarray_tutorial/.temp/GSE19080/GSM472372_HISH0553.txt.gz"))
-file_lines <- readLines(con, n=1000)
+con <- gzfile(file.path(".temp/GSE19080/GSM472356_HISH0317.txt.gz"))
+file_lines <- readLines(con, n=50)
 close(con)
+file_lines
 
 # Subsettting files (here we have two different platforms) 
 pd7 = pd |>
@@ -96,6 +110,7 @@ agilent_data <- read.maimages(
     names = pd7$ID,
     other.columns = list(
         Flag = "Ignore Filter"))
+
 #--------------------------------------------------------
 # Part 4: Manipulating targets
 #--------------------------------------------------------
@@ -105,10 +120,10 @@ agilent_data$targets = agilent_data$targets |>
     left_join(pd7, by = c("sampleName" = "ID")) |>
     as.data.frame() |>
     tibble::column_to_rownames("sampleName")
+agilent_data$targets
 
 #### gene Annotation
 gpl2 <- getGEO("GPL9686")
-
 head(fData(meta)[,c("ID", "SYMBOL", "GENE_NAME", "GB_ACC")])
 annot <- Table(gpl2)[, c("SYMBOL", "GENE_NAME", "GB_ACC")]
 
@@ -178,13 +193,18 @@ agilent_two_color_qc <- function(agilent_data,
 
 ## Apply the function to the data
 gse1 = agilent_two_color_qc(agilent_data)
+
 ##### PCA
 dim(gse1)
+
 boxplot(gse1$M, main="Normalized Negative Controls")
 
 pd7
+
 pca <- prcomp(t(gse1$M))
+pca
 rownames(pca$x)
+
 pca = pca$x |>
     as.data.frame() 
 pca |>
@@ -197,7 +217,10 @@ pca |>
 # Part 6: DE
 #--------------------------------------------------------
 # Create design matrix based on final_subtype
+pd7$atl_subtype2
+
 design <- model.matrix(~ 0 + factor(pd7$atl_subtype2))
+design
 rownames(design) <- pd7$ID
 colnames(design) <- levels(factor(pd7$atl_subtype2))
 head(design, 20)
@@ -205,9 +228,7 @@ head(design, 20)
 # Make contrasts (adjust based on your comparisons)
 levels(factor(pd7$atl_subtype2))
 contrast.matrix <- makeContrasts(
-    ATL_HAMTSP = ATL - HAMTSP,
     ATL_AC = ATL - AC,
-    HAM_TSP_AC = HAMTSP - AC,
     levels = design
 )
 fit2 <- lmFit(gse1, design) %>%
@@ -215,7 +236,7 @@ fit2 <- lmFit(gse1, design) %>%
     eBayes()
 
 # Get significant probes (FDR < 0.01)
-top_probes <- topTable(fit2, number = Inf, adjust.method = "BH" ,  p.value = 0.01)
+top_probes <- topTable(fit2, number = Inf, adjust.method = "BH") #,  p.value = 0.01)
 head(top_probes)
 
 #--------------------------------------------------------
@@ -240,8 +261,8 @@ top_probes |>
     dplyr::select(-c(1:5, 8)) |>
     #dplyr::filter(GENE_SYMBOL =="ZNF856B") #|>
     dplyr::filter(SYMBOL %in% neg_tcr) |>
-    as_tibble() |>
-    arrange(desc(ATL_AC)) #|>
+    as_tibble() #|>
+    #arrange(desc(ATL_AC)) #|>
 
 datatable(probesx |>
     dplyr::select(-c(1:5, 7:8, 10:12)) |>
