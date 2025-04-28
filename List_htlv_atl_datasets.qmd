@@ -17,3 +17,13 @@ Gene Expression Signatures for the Accurate Diagnosis of Peripheral T-Cell Lymph
 ### @tattermusch2012
 
 GSE29333
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE225759
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE211044
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE127180
+****
+
+Ancient:
+https://www.ncbi.nlm.nih.gov/sra/SRX552932%5Baccn%5D

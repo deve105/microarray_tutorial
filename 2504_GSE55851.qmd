@@ -456,30 +456,89 @@ head(table)
 
 htlv_tcr <- c("MYD88", "CD247", "TIGIT", "CD101", "IL2RA", "CD58", "ITK", "TXK", "GATA3", "IRF4", "CBLB", "PTPN12", "ATM", "BTK", "SOCS2")
 
-htlvtcr_id <- table |>
+#htlvtcr_id <-# 
+table |>
     dplyr::select(GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
     # dplyr::filter(str_detect(new_SYMBOL, "PTPN11" ))
-    dplyr::filter(new_SYMBOL %in% htlv_tcr) |>
-    pull(GB_ACC)
-
+    dplyr::filter(new_SYMBOL %in% htlv_apc) |>
+    arrange(adj.P.Val)
+````
+```{r}
 #### htlvapc https://www.nature.com/articles/s41598-023-28167-1
+
 htlv_apc = c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2",  "TAPBP")
 
+
 htlvapc <- table |>
-    dplyr::select(GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
+    dplyr::select(ID, GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
     #dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
     dplyr::filter(new_SYMBOL %in% htlv_apc) |>
-    pull(GB_ACC)
-matched <- htlvapc %in% rownames(gse$E)
-matched
-head(gse$E)
-htlvapc
-genes <- gse$E[htlvapc, ] #|>
+    pull(ID)
+ 
+
+gse$genes = gse$genes |>
+    tibble::rownames_to_column("ID") |>
+    left_join(table[, c("ID", "GENE_SYMBOL")], by = c("SystematicName"="ID"))
+ 
+genes_apc<- avereps(gse, ID = gse$genes$GENE_SYMBOL)
+genes_apc$genes$GENE_SYMBOL = droplevels(as.factor(genes_apc$genes$GENE_SYMBOL))
+
+genes_apc_x <- genes_apc$E |>
     as.data.frame() |>
-    tibble::rownames_to_column("ENSEMBL_ID") |>
-    left_join(table[, c("GB_ACC", "GENE_SYMBOL")], by = c("ENSEMBL_ID" = "GB_ACC")) |>
+    tibble::rownames_to_column("ID") |>
+    filter(ID %in% htlv_apc) |>
+    tibble::column_to_rownames("ID") |>
+    as.matrix() 
+head(genes_apc_x)
+
+annotation_data <- data.frame(
+    ATLType = factor(pd7$atltype), # Replace 'atltype' with your actual column name
+    CD7 = factor(pd7$cd7),
+    row.names = pd7$ID # Must match your sample names
+)
+pd7$cd7
+annotation_data = annotation_data |>
+    mutate(CD7=dplyr::recode_factor(CD7, CD7P="CD7+CADM1-", CD7N="CD7-CADM1+", CD7D="CD7+CADM1+" )) |>
+    dplyr::rename("HTLV-1 Disease"=ATLType, "CD4 subtype"=CD7)
+    
+pd7$atltype
+annotation_colors <- list(
+    "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set2", n = 4),
+    "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set1", n = 3)
+)
+RColorBrewer::display.brewer.all()
+names(annotation_colors$"HTLV-1 Disease") <- levels(annotation_data$"HTLV-1 Disease")
+names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
+
+
+# 5. Create the heatmap with error handling
+
+pheatmap(
+    mat = genes_apc_x,
+    scale = "row",
+    annotation_col = annotation_data,
+    annotation_colors = annotation_colors,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    main = "APC genes",
+    filename = "2504_APC_genes.png",
+    width = 7, # Nature standard single-column
+    height = 5,
+    units = "in",
+    family = "Arial" # Embed font
+)
+##################
+
+genes_apc<- avereps(genes_apc, ID = genes_apc$genes$GENE_SYMBOL)
+
+genes_apc
+genes_apc_matrix
+genes_apc$E |>
+    as.data.frame() |>
+    tibble::rownames_to_column("ID") |>
+    left_join(table[, c("ID", "GENE_SYMBOL")], by = "ID") #|>
     tibble::column_to_rownames("GENE_SYMBOL") |>
-    dplyr::select(-ENSEMBL_ID) |>
+    dplyr::select(-ID) |>
     as.matrix()
 head(gse$E[htlvapc, ])
 htlvtcr_id
@@ -525,14 +584,14 @@ annotation_colors
 # 5. Create the heatmap with error handling
 
 pheatmap(
-    mat = genes,
+    mat = genes_apc_x,
     scale = "row",
     annotation_col = annotation_data,
     annotation_colors = annotation_colors,
     show_rownames = TRUE,
     show_colnames = TRUE,
-    main = "TCR genes",
-    filename = "2504_TCR_genes.png",
+    main = "APC genes",
+    filename = "2504_APC_genes.png",
     width = 7, # Nature standard single-column
     height = 5,
     units = "in",
