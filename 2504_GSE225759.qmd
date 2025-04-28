@@ -6,7 +6,7 @@
 # Part 1: loading packages and functions
 #--------------------------------------------------------
 pacman::p_load(
-    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit
+    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit, NanoStringNCTools, NanoStringDiff
 )
 # function is log2transformed
 isLog2Transformed <- function(data) {
@@ -36,7 +36,7 @@ colnames(exprs(meta))
 head(pData(meta))
 
 # Metadata wrangling
-metadata <- pData(gset) |>
+metadata <- pData(meta) |>
     dplyr::rename(
         caseID = "case # from supplemental table9 (pmid35839444):ch1",
         nanostring = "nanosstringclass:ch1",
@@ -57,39 +57,13 @@ metadata <- pData(gset) |>
         nanostring = str_replace_na(nanostring, ""),
         final_subtype = stringr::str_c(subtype, nanostring)
     ) |>
+    dplyr::mutate(file = str_split(supplementary_file, "/") |> map_chr(tail, 1)) |>
     select(
         geo_accession,
         supplementary_file,
         caseID,
-        final_subtype)
-
-options(download.file.method = "curl")
-
-raw <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE225nnn/GSE225759/suppl/GSE225759_RAW.tar"
-matrix <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE225nnn/GSE225759/matrix/GSE225759_series_matrix.txt.gz"
-
-download.file(matrix, destfile = "./.temp/GSE225759.gz", method = "curl")
-dir.create("./.temp", showWarnings = FALSE, recursive = TRUE)
-options(GEOquery.integrate.https = FALSE)
-
-
-#####################################################
-# Assuming that everything is OK (it has been normalized)
-
-
-    )
-# testing subtypes, it has supplementary files links
-unique(metadata$final_subtype)
-datatable(metadata)
-
-atl_ptcl_geo <- metadata |>
-    filter(final_subtype %in% c("ATLL", "PTCL-TBX21", "PTCL-GATA3", "ENKTL", "AITL", "ALCL-pos", "ALCL-neg", "Intermediate AITL/TBX21", "Intermediate.AITL/GATA3", "Intermediate AITL/GATA3")) |>
-    pull(geo_accession)
-
-atl_ptcl <- metadata |>
-    filter(final_subtype %in% c("ATLL", "PTCL-TBX21", "PTCL-GATA3", "ENKTL", "AITL", "ALCL-pos", "ALCL-neg", "Intermediate AITL/TBX21", "Intermediate.AITL/GATA3", "Intermediate AITL/GATA3")) |>
-    select(geo_accession, final_subtype) |>
-    mutate(final_subtype = dplyr::recode(final_subtype,
+        final_subtype, file) |>
+    dplyr::mutate(final_subtype = dplyr::recode(final_subtype,
         ATLL = "ATLL",
         "PTCL-TBX21" = "PTCLTBX",
         "PTCL-GATA3" = "PTCLGATA",
@@ -98,17 +72,141 @@ atl_ptcl <- metadata |>
         "Intermediate AITL/TBX21" = "iAITLTBX21", "Intermediate.AITL/GATA3" = "iAITLGATA3", "Intermediate AITL/GATA3" = "iAITLGATA3"
     ))
 
+colnames(metadata)
+metadata$geo_accession
+##########################
+## Not following this
+options(download.file.method = "curl")
+raw <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE225nnn/GSE225759/suppl/GSE225759_RAW.tar"
+matrix <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE225nnn/GSE225759/matrix/GSE225759_series_matrix.txt.gz"
+download.file(matrix, destfile = "./.temp/GSE225759.gz", method = "curl")
+dir.create("./.temp", showWarnings = FALSE, recursive = TRUE)
+options(GEOquery.integrate.https = FALSE)
+###########################
+
+## Download all the files in the .temp of this environment
+for (i in 1:length(metadata$supplementary_file)) {
+    url <- metadata$supplementary_file[i]
+    destfile <- file.path(paste0(".temp/", id, "/", metadata$file[i]))
+    # Download the file
+    tryCatch(
+        {
+            download.file(url, destfile, mode = "wb", method = "curl")
+        },
+        error = function(e) {
+            # Fallback to default method if curl fails
+            download.file(url, destfile, mode = "wb")
+        }
+    )
+    # Optional: Extract if it's a tar file
+    if (grepl("\\.tar(\\.gz)?$", destfile)) {
+        untar(destfile, exdir = paste0(".temp/", id))
+    }
+}
+
+#####################################################
+# Assuming that everything is OK (it has been normalized)
+
+# testing subtypes, it has supplementary files links
+unique(metadata$final_subtype)
+datatable(metadata)
+
+atl_ptcl_geo <- metadata |>
+    filter(final_subtype %in% c("ATLL", "PTCL-TBX21", "PTCL-GATA3", "ENKTL", "AITL", "ALCL-pos", "ALCL-neg", "Intermediate AITL/TBX21", "Intermediate.AITL/GATA3", "Intermediate AITL/GATA3")) |>
+    pull(geo_accession)
+
+
 ```
 
 
 ```{r}
-# Function to check if its log transformed
-isLog2Transformed <- function(data){
-  qx <- as.numeric(quantile(data, c(0., 0.25, 0.5, 0.75, 
-  0.99, 1.0), na.rm=T))
-  shouldBeLogged <- (qx[5] > 100) || (qx[6]-qx[1] > 50 && qx[2] > 0)
-  return(!shouldBeLogged)
-  }
+#--------------------------------------------------------
+# Part 3: Reading nanostring data
+#--------------------------------------------------------
+dim(metadata)
+training = metadata |>
+  dplyr::filter(str_detect(file, "Training"))
+dataset <- readNanoStringRccSet(
+  rccFiles = file.path(".temp", id, training$file))
+
+validation = metadata |>
+  dplyr::filter(str_detect(file, "Validation"), !file%in%bad_files)
+
+dataset2 <- readNanoStringRccSet(
+  rccFiles = file.path(".temp", id, validation$file))
+
+validation2 = metadata |>
+  dplyr::filter(str_detect(file, "Validation"), file%in%bad_files)
+
+dataset3 = readNanoStringRccSet(
+  rccFiles = file.path(".temp", id, validation2$file))
+
+dim(dataset3)
+dataset$targets
+dataset <-createNanoStringSetFromFiles(file.path(".temp", id, metadata$file))
+
+
+# Read each file individually and check feature names
+feature_lists <- lapply(file.path(".temp", id, validation$file), function(f) {
+  dat <- readNanoStringRccSet(rccFiles = f)
+  rownames(dat)
+})
+
+# Compare all files against the first file
+mismatches <- sapply(feature_lists, function(feats) !identical(feats, feature_lists[[1]]))
+bad_files <- validation$file[mismatches]
+
+print(bad_files)  # Files that don't match the first file
+
+# nCounter normalization
+norm_data <- normalize(dataset, 
+                       method = "quantile", 
+                       include.hk = TRUE, 
+                       include.negative = FALSE)
+
+
+pData(norm_data) = pData(norm_data) |>
+  tibble::rownames_to_column("file") |>
+  left_join(metadata, by="file") |>
+  tibble::column_to_rownames("geo_accession")
+
+table(pData(norm_data)$final_subtype)
+
+norm_data <- log2(exprs(norm_data) + 1)
+
+design <- model.matrix(~ 0 + factor(pData(norm_data)$final_subtype))
+design
+rownames(design) <- pData(norm_data)$geo_accession
+colnames(design) <- levels(factor(pData(norm_data)$final_subtype))
+head(design, 20)
+
+# Make contrasts (adjust based on your comparisons)
+levels(factor(pd7$atl_subtype2))
+contrast.matrix <- makeContrasts(
+  ATLL_vs_PTCLTBX = ATLL - PTCLTBX,
+  ATLL_vs_PTCLGATA = ATLL - PTCLGATA,
+  ATLL_vs_ENKTL = ATLL - ENKTL,
+  ATLL_vs_AITL = ATLL - AITL,
+  ATLL_vs_ALCLpos = ATLL - ALCLpos,
+  ATLL_vs_ALCLneg = ATLL - ALCLneg,
+  ATLL_vs_iAITLGATA = ATLL - iAITLGATA3,
+  ATLL_vs_iAITLTBX = ATLL - iAITLTBX21,
+  levels = design
+)
+
+fit2 <- lmFit(norm_data, design) %>%
+    contrasts.fit(contrast.matrix) %>%
+    eBayes()
+
+top_probes <- topTable(fit2, number = Inf,  adjust.method = "BH", sort.by = "B", p.value = 0.01)
+top_probes |>
+    arrange( desc(ATLL_vs_PTCLTBX))  |>
+    tibble::rownames_to_column("ID") |>
+    filter(str_detect(ID, "CD5"))
+
+
+
+
 ### exprs(gset) <- log2(exprs(gset))
 boxplot(exprs(gset),outline=FALSE)
 isLog2Transformed(exprs(gset))

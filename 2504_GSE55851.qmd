@@ -1,13 +1,11 @@
 
 https://aacrjournals.org/clincancerres/article/20/11/2851/78357/CADM1-Expression-and-Stepwise-Downregulation-of
-# Loading packages
+## 1. Loading packages
 ```{r}
 pacman::p_load(
-    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots,  affy, oligoClasses, testit
-)
-pacman::p_load(
+    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots,  affy, oligoClasses, testit,
     hgu133plus2.db,
-    org.Hs.eg.db, reshape2, survminer, arrayQualityMetrics, testit, biomaRt, AgiMicroRna,  Biobase, marray
+    org.Hs.eg.db, reshape2, survminer, arrayQualityMetrics, testit, biomaRt, AgiMicroRna,  Biobase, marray, matrixStats
 )
 
 # function
@@ -18,17 +16,17 @@ isLog2Transformed <- function(data){
   }
 ```
 
-
+## 2. Metadata manipulation
 ```{r}
 # First obtain metadata
 GSE55851_meta <- getGEO("GSE55851", GSEMatrix = TRUE, destdir = ".temp")
 GSE55851_meta <- GSE55851_meta[[1]]
-
+GSE55851_meta
 # Explore columns
 class(GSE55851_meta)
 varLabels(GSE55851_meta)
 head(pData(GSE55851_meta))
-
+head(fData(GSE55851_meta))
 # Data wrangling
 pd <- pData(GSE55851_meta) |>
     tibble::rownames_to_column("ID") |>
@@ -42,7 +40,7 @@ pd <- pData(GSE55851_meta) |>
         "HTLV-1 asymptomatic carrier" = "AC",
         "Normal" = "HD"
     ), cd7 = case_when(
-        str_detect(file, "-D.") ~ "C7D",
+        str_detect(file, "-D.") ~ "CD7D",
         str_detect(file, "-P") ~ "CD7P",
         str_detect(file, "N") ~ "CD7N",
         .default = "U"
@@ -51,13 +49,21 @@ pd <- pData(GSE55851_meta) |>
 ### for CD7+CADM1+ (infected CD4 is homogenous) across all subtypes
 ### for CD7+CADM1- non-infected CD4 is homogeneous across all subtypes
 ### for CD7-CADM1+ (neoplastic cells) are homogeneous across all subtypes
+
 ## Exlude HD to evaluate DE genes in CD7+CADM1- vs CD7+CADM1+
-
+pd7 = pd
+pd7 = pd |>
+    dplyr::filter(cd7=="CD7P")
 pd7 <- pd |>
-    dplyr::filter(atltype != "HD", cd7 == "CD7N")
-pd7 <- pd
+    dplyr::filter(atltype %in% c("ATLc", "ATLa")) #atltype != "HD", 
 
-pd7
+pd
+```
+
+
+## 3. Retrieving data
+
+```{r}
 
 id <- "GSE55851" # GPL4133
 
@@ -88,7 +94,6 @@ for (i in 1:length(pd7$supplementary_file)) {
     }
 }
 
-
 ### Re-read the raw files
 agilent_data <- read.maimages(
     files = paste0(".temp/GSE55851/", pd7$file),
@@ -101,7 +106,7 @@ agilent_data <- read.maimages(
     ),
     other.columns = "gIsWellAboveBG" # Quality flag (if column exists)
 )
-head(agilent_data)
+
 # Convert targets to tibble for easy joining
 agilent_data$targets <- agilent_data$targets |>
     as_tibble(rownames = "sampleName") |>
@@ -110,15 +115,30 @@ agilent_data$targets <- agilent_data$targets |>
     tibble::column_to_rownames("sampleName")
 
 
+
 #### gene Annotation
 gpl2 <- getGEO("GPL10332")
-annot <- Table(gpl2)[, c("ID", "GENE_SYMBOL", "ENSEMBL_ID", "SPOT_ID", "CONTROL_TYPE")]
-agilent_data$genes <- annot[match(agilent_data$genes$ProbeName, annot$SPOT_ID), ]
-dim(agilent_data)
-table(agilent_data$genes$CONTROL_TYPE)
+
+annot= Table(gpl2)[, c("ID", "COL", "ROW", "CONTROL_TYPE", "GENE_SYMBOL","GENE_NAME","REFSEQ",  "GB_ACC", "SPOT_ID")]
+
+setdiff(agilent_data$genes$ProbeName, annot$SPOT_ID)
+setdiff(agilent_data$genes$SystematicName, agilent_data$genes$ProbeName)
+
+# IDs dont match
+annot[(annot$ID==4500),]
+agilent_data$genes[c(agilent_data$genes$ID=="4500"),]
+
+
+agilent_data$genes = agilent_data$genes |>
+    left_join(annot[,c("SPOT_ID","CONTROL_TYPE")], by = c("ProbeName"="SPOT_ID"), multiple="first")
+
+head(agilent_data$genes,40)
+
 ```
 
 
+
+## 4. QC Agilent one channel
 ```{r}
 # For single-channel EList (it is not obligatory)
 eset <- ExpressionSet(
@@ -165,74 +185,172 @@ agilent_qc <- function(
     message("\nQC: background correction")
     agilent_data_qc <- limma::backgroundCorrect(agilent_data, method = "normexp", offset = 20)
     # agilent_data = normalizeWithinArrays(agilent_data ,method="loess") we only have one color
+
+    ####### Removing controls before normalization
     message("\nQC: normalize between arrays")
-    agilent_data_nor <- limma::normalizeBetweenArrays(agilent_data_qc, method = "quantile")
+    agilent_data_qc <- limma::normalizeBetweenArrays(agilent_data_qc, method = "quantile")
+    message("\nQC: Filtering probes")
+    # 1. Calculate 25th percentiles (more efficient implementation)
+    probe_quantiles <- matrixStats::rowQuantiles(agilent_data_qc$E, probs = 0.25, na.rm = TRUE)
+
+    # 2. Improved noise floor estimation
+    # Determine noise floor from controls
+    pos_controls <- which(agilent_data_qc$genes$ControlType == 1)
+    neg_controls <- which(agilent_data_qc$genes$ControlType == -1)
+
+    if(length(pos_controls) > 10) {  # Need sufficient controls
+        noise_floor <- median(agilent_data_qc$E[pos_controls, ]) + 2 * mad(agilent_data_qc$E[pos_controls, ])
+        message(sprintf("Using positive controls (n=%d) for noise floor: %.2f", 
+                      length(pos_controls), noise_floor))
+    } else if(length(neg_controls) > 10) {
+        noise_floor <- median(agilent_data_qc$E[neg_controls, ]) + 3 * mad(agilent_data_qc$E[neg_controls, ])
+        message(sprintf("Using negative controls (n=%d) for noise floor: %.2f", 
+                      length(neg_controls), noise_floor))
+    } else {
+        noise_floor <- quantile(agilent_data_qc$E, 0.1, na.rm = TRUE)
+        message("Insufficient controls - using 10th percentile as cutoff: ", noise_floor)
+    }   
+
+    # 3. Adaptive filtering with diagnostics
+    keep <- (probe_quantiles > noise_floor) & 
+        (rowSums(agilent_data_qc$E > noise_floor) >= ceiling(ncol(agilent_data_qc)*0.25))  &
+        (agilent_data_qc$genes$CONTROL_TYPE == FALSE)  # Keep only non-control probes
+
+    # 4. QC metrics
+    filter_stats <- data.frame(
+    Total_Probes = nrow(agilent_data_qc),
+    Biological_Probes = sum(agilent_data_qc$genes$ControlType == 0),
+    Retained_Probes = sum(keep),
+    Percent_Retained = round(100*sum(keep)/nrow(agilent_data_qc), 1),
+    Noise_Floor = round(noise_floor, 2)
+    )
+    print(filter_stats)
+
+    # Option B: Relative cutoff (remove bottom 20% probes)
+    #keep <- probe_quantiles > quantile(probe_quantiles, 0.2)
+    # Apply filter
+    agilent_data_qc <- agilent_data_qc[keep, ]
     # remove those without a symbol
-    message("\nQC: removing those without a symbol")
-    agilent_data_rem <- agilent_data_nor[(agilent_data_nor$genes$CONTROL_TYPE == "FALSE"), ] # considering "" as empty
     # todo: averaging or take one with best FC?
     message("\nQC: average for repetitives")
-    agilent_data_avg <- avereps(agilent_data_rem, ID = agilent_data_rem$genes$SPOT_ID) # Probe name from annotations
+    agilent_data_qc$genes$ProbeName = as.factor(agilent_data_qc$genes$ProbeName)
+    agilent_data_qc$genes$SystematicName=as.factor(agilent_data_qc$genes$SystematicName)
+    agilent_data_avg <- avereps(agilent_data_qc, ID = agilent_data_qc$genes$ProbeName) 
+    agilent_data_avg$genes$ProbeName <- droplevels(agilent_data_avg$genes$ProbeName)
+    if(nrow(agilent_data_avg) >= nrow(agilent_data_qc)) {
+    warning("No probes were averaged - check ProbeName uniqueness")
+    }
+    message("After probe-level averaging: ", paste(dim(agilent_data_avg), collapse = " x "))
+
+    # Probe name from annotations
     message("\nQC: average for repetitives")
-    agilent_data_avg <- avereps(agilent_data_avg, ID = agilent_data_avg$genes$GENE_SYMBOL) 
+    agilent_data_fn <- avereps(agilent_data_avg, ID = agilent_data_avg$genes$SystematicName) 
+    agilent_data_fn$genes$SystematicName <- droplevels(agilent_data_fn$genes$SystematicName)
+
+    if(nrow(agilent_data_fn) >= nrow(agilent_data_avg)) {
+    warning("No probes were averaged - check ProbeName uniqueness")
+    }
+    message("After probe-level averaging: ", paste(dim(agilent_data_fn), collapse = " x "))
+
     message("\nQC: final dimensions")
-    print(dim(agilent_data_avg)) # 33492   202
+    print(dim(agilent_data_fn)) # 33492   202
     # is it normalized?
     message("\nIs it normalized:")
-    print(isLog2Transformed(agilent_data_avg$E))
+    print(isLog2Transformed(agilent_data_fn$E))
     message("\nDensities plot ->:")
-    plotDensities(agilent_data_avg, main = "", legend = FALSE)
-    return(agilent_data_avg)
+    #plotDensities(agilent_data_avg, main = "", legend = FALSE)
+    return(agilent_data_fn)
 }
+
 
 gse <- agilent_qc(agilent_data)
 
-gse
+dim(gse$genes)
+
+```
+
+## 5. Expression analysis
+```{r}
 # First perform differential expression analysis to find significant probes
 # Create design matrix based on final_subtype
-pd7
-design <- model.matrix(~ 0 + factor(pd7$cd7))
-design
-rownames(design) <- pd7$ID
-colnames(design) <- levels(factor(pd7$cd7))
-head(design, 20)
 
+pd7
+design <- pd7 %>%
+  mutate(cd7_factor = factor(cd7),
+  gender_male = as.integer(gender == "male")) %>%
+  modelr::model_matrix(~ 0 + cd7_factor + gender_male) %>%
+  as.data.frame() %>%
+  `rownames<-`(pd7$ID) |>
+  `colnames<-`(levels(c(factor(c(pd7$cd7, "male")))  ))
+design
+design <- pd7 %>%
+  mutate(atl_factor = factor(atltype)) %>%
+  modelr::model_matrix(~ 0 + atl_factor) %>%
+  as.data.frame() %>%
+  `rownames<-`(pd7$ID) %>%
+  `colnames<-`(levels(factor(pd7$atltype)))
+
+head(design, 20)
 # remove low expressing geneS
-cutoff <- median(gse$E)
-cutoff
+#cutoff <- median(gse$E)
+#cutoff
 ## TRUE or FALSE for whether each gene is "expressed" in each sample
-is_expressed <- gse$E > cutoff / 2
+#is_expressed <- gse$E > cutoff / 2
 ## Identify genes expressed in more than 2 samples
-keep <- rowSums(is_expressed) > 2
+#keep <- rowSums(is_expressed) > 2
 ## check how many genes are removed / retained.
-table(keep)
+#table(keep)
 ## subset to just those expressed genes
-gse1 <- gse[keep, , drop = FALSE]
+#gse1 <- gse[keep, , drop = FALSE]
 # For phenotype data factors
-dim(gse1)
-dim(gse)
-# Fit linear model
-fit <- lmFit(gse, design)
+#dim(gse1)
+#dim(gse)
+
 # Make contrasts (adjust based on your comparisons)
-levels(factor(pd7$cd7))
+levels(factor(pd7$atltype))
+contrast.matrix <- makeContrasts(
+    ATLc_AC = ATLc - AC,
+    ATLc_HD = ATLc - HD,
+    AC_HD = AC - HD,
+    levels = design
+)
 
 contrast.matrix <- makeContrasts(
     CD7N_CD7P = CD7N - CD7P,
-    CD7N_CD7D = CD7N - C7D,
-    CD7D_CD7P = C7D - CD7P,
+    CD7N_CD7D = CD7N - CD7D,
+    CD7D_CD7P = CD7D - CD7P,
     levels = design
 )
-fit2 <- contrasts.fit(fit, contrast.matrix)
-fit2 <- eBayes(fit2)
-fit2
+# Fit linear model
+fit <- lmFit(gse, design) |>
+    contrasts.fit(contrast.matrix) |>
+    eBayes()
+
 # Get significant probes (FDR < 0.01)
-top_probes <- topTable(fit2, number = Inf, adjust.method = "BH", sort.by = "B" , p.value = 0.01)
+top_probes <- topTable(fit, number = Inf, adjust.method = "BH", sort.by = "B", p.value = 0.05)
 colnames(top_probes)
+dim(top_probes) 
+
+head(annot)
+
 top_probes |>
-  dplyr::filter(grepl("ADORA3", GENE_SYMBOL))
+    tibble::rownames_to_column("ID") |>
+    as.data.frame() |>
+    left_join(annot[,c("GB_ACC", "GENE_SYMBOL", "GENE_NAME", "REFSEQ", "SPOT_ID" )], by=c("ProbeName"="SPOT_ID"), multiple="first") |>
+    arrange((CD7N_CD7D)) |>
+    head(50)
+
+sample |>
+    left_join(annot, by=c("ID"="GB_ACC"), ) |>
+    arrange((CD7N_CD7D))# |>
+    head(50)
+
+top_probes |>
+  dplyr::filter(grepl("CADM1", GENE_SYMBOL))
+
 (top_probes$GENE_SYMBOL, "NT5E")
-library(tidyverse)
-library(stringr)
+
+
 
 annot |>
     dplyr::filter(stringr::str_detec(GENE_SYMBOL, "ENTPD1"))
