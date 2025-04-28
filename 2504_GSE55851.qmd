@@ -65,7 +65,9 @@ pd7 <- pd |>
 # Option C
 pd7 <- pd |>
     dplyr::filter(atltype %in% c("ATLc", "ATLa")) # atltype != "HD",
-
+# Option D
+pd7=pd
+pd7
 ```
 
 ## 3. Retrieving data
@@ -288,13 +290,12 @@ pd7
 
 design <- pd7 %>%
     mutate(
-        cd7_factor = factor(cd7),
-        gender_male = as.integer(gender == "male")
-    ) %>%
-    modelr::model_matrix(~ 0 + cd7_factor + gender_male) %>%
+        cd7_factor = factor(cd7)) %>%
+    modelr::model_matrix(~ 0 + cd7_factor ) %>%
     as.data.frame() %>%
     `rownames<-`(pd7$ID) |>
-    `colnames<-`(levels(c(factor(c(pd7$cd7, "male")))))
+    `colnames<-`(levels(factor(pd7$cd7)))
+
 
 design
 design <- pd7 %>%
@@ -487,15 +488,20 @@ genes <- gse$E[htlvtcr_id, ] |>
 genes
 
 annotation_data <- data.frame(
-    ATLType = pd7$atltype, # Replace 'atltype' with your actual column name
+    ATLType = factor(pd7$atltype), # Replace 'atltype' with your actual column name
+    CD7 = factor(pd7$cd7),
     row.names = pd7$ID # Must match your sample names
 )
 annotation_data
 pd7$atltype
 annotation_colors <- list(
-    ATLType = RColorBrewer::brewer.pal(name = "Set2", n = 4) # Must match factor levels
+    ATLType = RColorBrewer::brewer.pal(name = "Set2", n = 4),
+    CD7 = RColorBrewer::brewer.pal(name = "Set1", n = 3)
 )
 names(annotation_colors$ATLType) <- levels(annotation_data$ATLType)
+names(annotation_colors$CD7) <- levels(annotation_data$CD7)
+
+annotation_colors
 # 5. Create the heatmap with error handling
 
 pheatmap(
