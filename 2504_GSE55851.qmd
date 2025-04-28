@@ -503,10 +503,10 @@ annotation_data = annotation_data |>
     
 pd7$atltype
 annotation_colors <- list(
-    "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set2", n = 4),
-    "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set1", n = 3)
+    "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set1", n = 4),
+    "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set3", n = 3)
 )
-RColorBrewer::display.brewer.all()
+?RColorBrewer::brewer.pal
 names(annotation_colors$"HTLV-1 Disease") <- levels(annotation_data$"HTLV-1 Disease")
 names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
 
