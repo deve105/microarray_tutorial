@@ -22,7 +22,7 @@ isLog2Transformed <- function(data) {
 ## First obtain metadata
 GSE55851_meta <- getGEO("GSE55851", GSEMatrix = TRUE, destdir = ".temp")
 GSE55851_meta <- GSE55851_meta[[1]]
-GSE55851_meta
+
 
 # Explore columns
 class(GSE55851_meta)
@@ -466,30 +466,31 @@ table |>
 ```{r}
 #### htlvapc https://www.nature.com/articles/s41598-023-28167-1
 
-htlv_apc = c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2",  "TAPBP")
+htlv_apc <- c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2", "TAPBP")
 
 
 htlvapc <- table |>
     dplyr::select(ID, GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
-    #dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
+    # dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
     dplyr::filter(new_SYMBOL %in% htlv_apc) |>
     pull(ID)
- 
 
-gse$genes = gse$genes |>
+
+gse$genes <- gse$genes |>
     tibble::rownames_to_column("ID") |>
-    left_join(table[, c("ID", "GENE_SYMBOL")], by = c("SystematicName"="ID"))
- 
-genes_apc<- avereps(gse, ID = gse$genes$GENE_SYMBOL)
-genes_apc$genes$GENE_SYMBOL = droplevels(as.factor(genes_apc$genes$GENE_SYMBOL))
+    left_join(table[, c("ID", "GENE_SYMBOL")], by = c("SystematicName" = "ID"))
+
+genes_apc <- avereps(gse, ID = gse$genes$GENE_SYMBOL)
+genes_apc$genes$GENE_SYMBOL <- droplevels(as.factor(genes_apc$genes$GENE_SYMBOL))
 
 genes_apc_x <- genes_apc$E |>
     as.data.frame() |>
     tibble::rownames_to_column("ID") |>
     filter(ID %in% htlv_apc) |>
     tibble::column_to_rownames("ID") |>
-    as.matrix() 
-head(genes_apc_x)
+    as.matrix()
+genes_apc_z <- t(scale(t(genes_apc_x)))
+head(genes_apc_z)
 
 annotation_data <- data.frame(
     ATLType = factor(pd7$atltype), # Replace 'atltype' with your actual column name
@@ -497,16 +498,15 @@ annotation_data <- data.frame(
     row.names = pd7$ID # Must match your sample names
 )
 pd7$cd7
-annotation_data = annotation_data |>
-    mutate(CD7=dplyr::recode_factor(CD7, CD7P="CD7+CADM1-", CD7N="CD7-CADM1+", CD7D="CD7+CADM1+" )) |>
-    dplyr::rename("HTLV-1 Disease"=ATLType, "CD4 subtype"=CD7)
-    
+annotation_data <- annotation_data |>
+    mutate(CD7 = dplyr::recode_factor(CD7, CD7P = "CD7+CADM1-", CD7N = "CD7-CADM1+", CD7D = "CD7+CADM1+")) |>
+    dplyr::rename("HTLV-1 Disease" = ATLType, "CD4 subtype" = CD7)
+
 pd7$atltype
 annotation_colors <- list(
     "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set1", n = 4),
     "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set3", n = 3)
 )
-?RColorBrewer::brewer.pal
 names(annotation_colors$"HTLV-1 Disease") <- levels(annotation_data$"HTLV-1 Disease")
 names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
 
@@ -514,8 +514,7 @@ names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
 # 5. Create the heatmap with error handling
 
 pheatmap(
-    mat = genes_apc_x,
-    scale = "row",
+    mat = genes_apc_z,
     annotation_col = annotation_data,
     annotation_colors = annotation_colors,
     show_rownames = TRUE,
@@ -529,7 +528,7 @@ pheatmap(
 )
 ##################
 
-genes_apc<- avereps(genes_apc, ID = genes_apc$genes$GENE_SYMBOL)
+genes_apc <- avereps(genes_apc, ID = genes_apc$genes$GENE_SYMBOL)
 
 genes_apc
 genes_apc_matrix
@@ -537,7 +536,7 @@ genes_apc$E |>
     as.data.frame() |>
     tibble::rownames_to_column("ID") |>
     left_join(table[, c("ID", "GENE_SYMBOL")], by = "ID") #|>
-    tibble::column_to_rownames("GENE_SYMBOL") |>
+tibble::column_to_rownames("GENE_SYMBOL") |>
     dplyr::select(-ID) |>
     as.matrix()
 head(gse$E[htlvapc, ])
