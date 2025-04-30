@@ -451,46 +451,36 @@ table |>
     )
 
 ##
+
+gse$genes = gse$genes |>
+    tibble::rownames_to_column("ID") |>
+    left_join(table[, c("ID", "GENE_SYMBOL")], by = c("SystematicName"="ID"))
+
+genes_apc<- avereps(gse, ID = gse$genes$GENE_SYMBOL)
+genes_apc$genes$GENE_SYMBOL = droplevels(as.factor(genes_apc$genes$GENE_SYMBOL))
+
 ## MYD88, QRICH1
-head(table)
 
 htlv_tcr <- c("MYD88", "CD247", "TIGIT", "CD101", "IL2RA", "CD58", "ITK", "TXK", "GATA3", "IRF4", "CBLB", "PTPN12", "ATM", "BTK", "SOCS2")
 
-#htlvtcr_id <-# 
-table |>
-    dplyr::select(GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
-    # dplyr::filter(str_detect(new_SYMBOL, "PTPN11" ))
-    dplyr::filter(new_SYMBOL %in% htlv_apc) |>
-    arrange(adj.P.Val)
-````
-```{r}
-#### htlvapc https://www.nature.com/articles/s41598-023-28167-1
 
-htlv_apc <- c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2", "TAPBP")
-
-
-htlvapc <- table |>
+htlvtcr <- table |>
     dplyr::select(ID, GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
-    # dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
-    dplyr::filter(new_SYMBOL %in% htlv_apc) |>
-    pull(ID)
-
-
-gse$genes <- gse$genes |>
-    tibble::rownames_to_column("ID") |>
-    left_join(table[, c("ID", "GENE_SYMBOL")], by = c("SystematicName" = "ID"))
-
-genes_apc <- avereps(gse, ID = gse$genes$GENE_SYMBOL)
-genes_apc$genes$GENE_SYMBOL <- droplevels(as.factor(genes_apc$genes$GENE_SYMBOL))
+    #dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
+    dplyr::filter(new_SYMBOL %in% htlv_tcr) |>
+    pull(GENE_SYMBOL)
 
 genes_apc_x <- genes_apc$E |>
     as.data.frame() |>
     tibble::rownames_to_column("ID") |>
-    filter(ID %in% htlv_apc) |>
+    filter(ID %in% htlvtcr) |>
     tibble::column_to_rownames("ID") |>
-    as.matrix()
-genes_apc_z <- t(scale(t(genes_apc_x)))
-head(genes_apc_z)
+    as.matrix() 
+
+genes_apc_x   
+genes_apc_z = t(scale(t(genes_apc_x)))
+genes_apc_z
+
 
 annotation_data <- data.frame(
     ATLType = factor(pd7$atltype), # Replace 'atltype' with your actual column name
@@ -498,15 +488,16 @@ annotation_data <- data.frame(
     row.names = pd7$ID # Must match your sample names
 )
 pd7$cd7
-annotation_data <- annotation_data |>
-    mutate(CD7 = dplyr::recode_factor(CD7, CD7P = "CD7+CADM1-", CD7N = "CD7-CADM1+", CD7D = "CD7+CADM1+")) |>
-    dplyr::rename("HTLV-1 Disease" = ATLType, "CD4 subtype" = CD7)
-
+annotation_data = annotation_data |>
+    mutate(CD7=dplyr::recode_factor(CD7, CD7P="CD7+CADM1-", CD7N="CD7-CADM1+", CD7D="CD7+CADM1+" )) |>
+    dplyr::rename("HTLV-1 Disease"=ATLType, "CD4 subtype"=CD7)
+    
 pd7$atltype
 annotation_colors <- list(
     "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set1", n = 4),
     "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set3", n = 3)
 )
+?RColorBrewer::brewer.pal
 names(annotation_colors$"HTLV-1 Disease") <- levels(annotation_data$"HTLV-1 Disease")
 names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
 
@@ -515,6 +506,72 @@ names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
 
 pheatmap(
     mat = genes_apc_z,
+    scale = "row",
+    annotation_col = annotation_data,
+    annotation_colors = annotation_colors,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    main = "TCR related genes",
+    filename = "2504_TCR_HTLV_genes.png",
+    width = 7, # Nature standard single-column
+    height = 5,
+    units = "in",
+    family = "Arial" # Embed font
+)
+````
+```{r}
+#### htlvapc https://www.nature.com/articles/s41598-023-28167-1
+
+htlv_apc = c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2",  "TAPBP")
+
+
+htlvapc <- table |>
+    dplyr::select(ID, GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
+    #dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
+    dplyr::filter(new_SYMBOL %in% htlv_apc) |>
+    pull(ID)
+ 
+
+gse$genes = gse$genes |>
+    tibble::rownames_to_column("ID") |>
+    left_join(table[, c("ID", "GENE_SYMBOL")], by = c("SystematicName"="ID"))
+ 
+genes_apc<- avereps(gse, ID = gse$genes$GENE_SYMBOL)
+genes_apc$genes$GENE_SYMBOL = droplevels(as.factor(genes_apc$genes$GENE_SYMBOL))
+
+genes_apc_x <- genes_apc$E |>
+    as.data.frame() |>
+    tibble::rownames_to_column("ID") |>
+    filter(ID %in% htlv_apc) |>
+    tibble::column_to_rownames("ID") |>
+    as.matrix() 
+head(genes_apc_x)
+
+annotation_data <- data.frame(
+    ATLType = factor(pd7$atltype), # Replace 'atltype' with your actual column name
+    CD7 = factor(pd7$cd7),
+    row.names = pd7$ID # Must match your sample names
+)
+pd7$cd7
+annotation_data = annotation_data |>
+    mutate(CD7=dplyr::recode_factor(CD7, CD7P="CD7+CADM1-", CD7N="CD7-CADM1+", CD7D="CD7+CADM1+" )) |>
+    dplyr::rename("HTLV-1 Disease"=ATLType, "CD4 subtype"=CD7)
+    
+pd7$atltype
+annotation_colors <- list(
+    "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set1", n = 4),
+    "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set3", n = 3)
+)
+?RColorBrewer::brewer.pal
+names(annotation_colors$"HTLV-1 Disease") <- levels(annotation_data$"HTLV-1 Disease")
+names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
+
+
+# 5. Create the heatmap with error handling
+
+pheatmap(
+    mat = genes_apc_x,
+    scale = "row",
     annotation_col = annotation_data,
     annotation_colors = annotation_colors,
     show_rownames = TRUE,
@@ -527,26 +584,64 @@ pheatmap(
     family = "Arial" # Embed font
 )
 ##################
+```
+```{r}
 
-genes_apc <- avereps(genes_apc, ID = genes_apc$genes$GENE_SYMBOL)
 
-genes_apc
-genes_apc_matrix
-genes_apc$E |>
+neg_tcr <- c("CD5", "PTPN6", "PTPN22", "SOCS1", "CBLB", "DUSP14", "CD6", "PDCD1LG2", "PTPN12", "DOK1", "MDM2", "JUNB", "SHC1", "UBD", "ATM", "BTK", "IL1RL1", "IFNGR2", "IFNGR1", "GNAI3", "SOCS2", "DRAK2", "PTPN11", "LCK", "CD3D", "CD3E", "CD3G", "LAT", "LCP2") # ZAP70, SLP76, ITK
+
+negtcr <- table |>
+    dplyr::select(ID, GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>
+    #dplyr::filter(str_detect(new_SYMBOL, "B2M" ))
+    dplyr::filter(new_SYMBOL %in% neg_tcr) |>
+    pull(GENE_SYMBOL)
+
+genes_apc_x <- genes_apc$E |>
     as.data.frame() |>
     tibble::rownames_to_column("ID") |>
-    left_join(table[, c("ID", "GENE_SYMBOL")], by = "ID") #|>
-tibble::column_to_rownames("GENE_SYMBOL") |>
-    dplyr::select(-ID) |>
-    as.matrix()
-head(gse$E[htlvapc, ])
-htlvtcr_id
+    filter(ID %in% negtcr) |>
+    tibble::column_to_rownames("ID") |>
+    as.matrix() 
 
-neg_tcr <- c("CD5", "PTPN6", "PTPN22", "SOCS1", "CBLB", "DUSP14", "CD6", "PDCD1LG2", "PTPN12", "DOK1", "MDM2", "JUNB", "SHC1", "UBD", "ATM", "BTK", "IL1RL1", "IFNGR2", "IFNGR1", "GNAI3", "SOCS2", "DRAK2", "PTPN11")
+genes_apc_x   
+genes_apc_z = t(scale(t(genes_apc_x)))
+
+annotation_data <- data.frame(
+    ATLType = factor(pd7$atltype), # Replace 'atltype' with your actual column name
+    CD7 = factor(pd7$cd7),
+    row.names = pd7$ID # Must match your sample names
+)
+
+annotation_data = annotation_data |>
+    mutate(CD7=dplyr::recode_factor(CD7, CD7P="CD7+CADM1-", CD7N="CD7-CADM1+", CD7D="CD7+CADM1+" )) |>
+    dplyr::rename("HTLV-1 Disease"=ATLType, "CD4 subtype"=CD7)
+    
+annotation_colors <- list(
+    "HTLV-1 Disease" = RColorBrewer::brewer.pal(name = "Set1", n = 4),
+    "CD4 subtype" = RColorBrewer::brewer.pal(name = "Set3", n = 3)
+)
+names(annotation_colors$"HTLV-1 Disease") <- levels(annotation_data$"HTLV-1 Disease")
+names(annotation_colors$"CD4 subtype") <- levels(annotation_data$"CD4 subtype")
 
 
-early_tcr <- c("LCK", "CD3D", "CD3E", "CD3G", "LAT", "LCP2") # ZAP70, SLP76, ITK
+# Create the heatmap with error handling
 
+pheatmap(
+    mat = genes_apc_z,
+    scale = "row",
+    annotation_col = annotation_data,
+    annotation_colors = annotation_colors,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    main = "TCR related genes",
+    filename = "2504_TCR_HTLV_genes2.png",
+    width = 7, # Nature standard single-column
+    height = 5,
+    units = "in",
+    family = "Arial" # Embed font
+)
+
+#############
 head(annot)
 
 annot |>
