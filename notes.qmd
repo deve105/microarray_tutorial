@@ -1,0 +1,9 @@
+differentialexpression, transcript discovery, splice variants, allele-specific expression
+
+1) Raw-data: Short sequence reads
+2) Mapping: splice junctions
+3) Summarize: counting over exons vs counter over genes: Table counts (abundance)
+4) DE: filtering out lowly expressed genes: cut-offs, iterative. Normalisation: sequencing depth, TMM bias and Batch effects.
+   1) Models the counts directly: Negative binomial: edgeR, DESeq/2
+   2) Transform the counts: voom
+5) Pathway analysis
