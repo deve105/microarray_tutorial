@@ -588,7 +588,7 @@ pheatmap(
 ```{r}
 
 
-neg_tcr <- c("CD5", "PTPN6", "PTPN22", "SOCS1", "CBLB", "DUSP14", "CD6", "PDCD1LG2", "PTPN12", "DOK1", "MDM2", "JUNB", "SHC1", "UBD", "ATM", "BTK", "IL1RL1", "IFNGR2", "IFNGR1", "GNAI3", "SOCS2", "DRAK2", "PTPN11", "LCK", "CD3D", "CD3E", "CD3G", "LAT", "LCP2") # ZAP70, SLP76, ITK
+neg_tcr <- c("CD5", "PTPN6", "PTPN22", "SOCS1", "CBLB", "DUSP14", "CD6", "PDCD1LG2", "PTPN12", "DOK1", "MDM2", "JUNB", "SHC1", "UBD", "ATM", "BTK", "IL1RL1", "IFNGR2", "IFNGR1", "GNAI3", "SOCS2", "DRAK2", "PTPN11", "LCK", "CD3D", "CD3E", "CD3G", "LAT", "LCP2", "ZAP70", "SLP76", "ITK")
 
 negtcr <- table |>
     dplyr::select(ID, GENE_SYMBOL, new_SYMBOL, GENE_NAME, GB_ACC, CD7N_CD7P, CD7N_CD7D, CD7D_CD7P, "P.Value", "adj.P.Val") |>

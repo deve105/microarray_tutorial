@@ -213,6 +213,7 @@ genes_lidf = gse_final$E[df_li,] |>
   tibble::rownames_to_column("ENSEMBL_ID") |>
   left_join(annot[,c("ENSEMBL_ID", "GENE_SYMBOL")], by=c("ENSEMBL_ID")) |>
   pivot_longer(-c(GENE_SYMBOL,ENSEMBL_ID) , names_to="sample", values_to="Exp")
+  
 pd7m = pd7 |>
     mutate(atl=ifelse(str_detect(atl_subtype, "uninfected"), "HD", "ATL"))
 pd7m

@@ -1,6 +1,13 @@
 #--------------------------------------------------------
 # Title: Microarray Data Analysis with GEOquery and limma
+"""
+#- Gene expression profiling in patients infected with HTLV-1: Identification of ATL and HAM/TSP-specific genetic profiles
 
+Customized CHIP
+gene expression profiles of CD4+ T-cells isolated from 7 ATL, 12 HAM/TSP and 11 AC (asymptomatic carriers).
+Agilent two colors, but HD were read in a different protocol.
+
+"""
 #--------------------------------------------------------
 # Part 1: loading packages and functions
 #--------------------------------------------------------
@@ -14,8 +21,6 @@ isLog2Transformed <- function(data) {
     shouldBeLogged <- (qx[5] > 100) || (qx[6] - qx[1] > 50 && qx[2] > 0)
     return(!shouldBeLogged)
 }
-
-
 
 #--------------------------------------------------------
 # Part 2: Obtaining metadata and raw data
@@ -33,21 +38,21 @@ if (!dir.exists(paste0(".temp/", id))) {
 
 # Obtaining Metadata
 meta <- getGEO(id, GSEMatrix = TRUE, destdir = ".temp")
-
-methods(class=class(meta))
-
 meta <- meta[[1]]
-meta
+
+#Basic exploration of the metadata
 head(fData(meta), 2)
 head(exprs(meta), 2)
 pData(meta)
-fData(meta)
+dim(fData(meta))
 colnames(exprs(meta))
 dim(meta)
-
 head(pData(meta), 5)
-names(pData(meta))
-pData(meta)$characteristics_ch1
+head(fData(meta))
+
+annotx = fData(meta) #>
+annotx |>
+    filter(GENE_NAME=="")
 
 # Metadata wrangling
 pd <- pData(meta) |>
@@ -108,8 +113,8 @@ agilent_data <- read.maimages(
     source = "quantarray",
     green.only = FALSE,
     names = pd7$ID,
-    other.columns = list(
-        Flag = "Ignore Filter"))
+    other.columns = list(Flag = "Ignore Filter"))
+
 
 #--------------------------------------------------------
 # Part 4: Manipulating targets
@@ -120,25 +125,39 @@ agilent_data$targets = agilent_data$targets |>
     left_join(pd7, by = c("sampleName" = "ID")) |>
     as.data.frame() |>
     tibble::column_to_rownames("sampleName")
-agilent_data$targets
+
 
 #### gene Annotation
 gpl2 <- getGEO("GPL9686")
-head(fData(meta)[,c("ID", "SYMBOL", "GENE_NAME", "GB_ACC")])
-annot <- Table(gpl2)[, c("SYMBOL", "GENE_NAME", "GB_ACC")]
 
+annot <- Table(gpl2)[, c("SYMBOL", "GB_ACC", "ID")]
+annot$dataset <- "GPL9686"
+"""
+BLANK: Empty spots with no DNA
+Arabidopsis: Plant DNA (shouldn't hybridize to human samples)
+SSC: Salmon Sperm DNA (unrelated to human targets)
+"""
+controls=c("Arabidopsis", "SSC", "BLANK")
+
+
+head(agilent_data$genes)
 # Add gene symbols to agilent_data
-head(agilent_data$gene)
+
 agilent_data$genes <- agilent_data$genes |>
-  dplyr::left_join(annot, by=c("Name"="GB_ACC")) |>
-  mutate(is_control=factor(ifelse(is.na(SYMBOL) & is.na(GENE_NAME), "control", "gene")))
+    dplyr::select(Name) |>
+    dplyr::left_join(annot, by = c("Name" = "GB_ACC")) |>
+    dplyr::mutate(is_control = factor(
+        case_when(
+            Name %in% controls & is.na(dataset) ~ "control",
+            !(Name %in% controls) & is.na(dataset) ~ "UNK",
+            dataset == "GPL9686" ~ "gene"
+        )
+    ))
 
-table(agilent_data$gene$is_control)
+agilent_data$
+table(agilent_data$genes$is_control, useNA="always")
 
-#agilent_data$genes$GENE_SYMBOL <- annot$SYMBOL[match(agilent_data$genes$Name, annot$GB_ACC)]
-
-table(agilent_data$genes$is_control)
-
+control_status
 #--------------------------------------------------------
 # Part 5: QC
 #--------------------------------------------------------
@@ -178,6 +197,7 @@ agilent_two_color_qc <- function(agilent_data,
     )
     
     # 4. Background correction
+    control_status <- as.numeric(agilent_data$genes$is_control == "control")
     agilent_data <- limma::backgroundCorrect(agilent_data, method="normexp", offset=20) 
     # 5. Normalization
     agilent_data <- limma::normalizeWithinArrays(agilent_data, method="loess")
@@ -186,7 +206,7 @@ agilent_two_color_qc <- function(agilent_data,
     # 6. technical replicates reduction by probename
     agilent_data <- limma::avereps(agilent_data, ID=agilent_data$genes$Name)
     agilent_data <- agilent_data[agilent_data$genes$is_control=="gene", ]
-    agilent_data <- limma::avereps(agilent_data, ID=agilent_data$genes$GENE_SYMBOL)
+    agilent_data <- limma::avereps(agilent_data, ID=agilent_data$genes$SYMBOL)
     agilent_data$genes <- droplevels(agilent_data$genes)
     return(agilent_data)
 }
@@ -198,13 +218,7 @@ gse1 = agilent_two_color_qc(agilent_data)
 dim(gse1)
 
 boxplot(gse1$M, main="Normalized Negative Controls")
-
-pd7
-
 pca <- prcomp(t(gse1$M))
-pca
-rownames(pca$x)
-
 pca = pca$x |>
     as.data.frame() 
 pca |>
@@ -212,32 +226,229 @@ pca |>
     dplyr::left_join(pd7, by="ID") |> 
     tidyplots::tidyplot(x=PC1, y=PC2, color=atl_subtype) |>
     tidyplots::add_data_points()
+#--------------------------------------------------------
+# Part 6: Read the additiional data *Healthy donors*
+#--------------------------------------------------------
+con <- gzfile(file.path(".temp/GSE19080/GSM472379_HISH0562.txt.gz"))
+file_lines <- readLines(con, n = 50)
+close(con)
+file_lines
+?
+pd7_2 <- pd |>
+    filter(ID %in% c(paste0("GSM4723", 74:81)))
+
+agilent_data2 <- read.maimages(
+    files = file.path(".temp", id, pd7_2$file),
+    source = "genepix.custom",
+    green.only = FALSE,
+    names = pd7_2$ID,
+       other.columns = list(
+        Flags = "Autoflag",
+        ControlType = "ControlType",   # Specific to GenePix
+        Block = "Block"
+))
+
+agilent_data2
+head(agilent_data$printer)
+table(agilent_data2$other$Autoflag, useNA="always")
+
+# For GenePix data (you're already using this)
+agilent_data2$genes$is_control <- grepl("^(CONTROL|CTL|NC_|PC_)", agilent_data2$genes$Annot)
+head(agilent_data2$genes)
+
+
+# Convert targets to tibble for easy joining
+agilent_data2$targets <- agilent_data2$targets |>
+    as_tibble(rownames = "sampleName") |>
+    left_join(pd7_2, by = c("sampleName" = "ID")) |>
+    as.data.frame() |>
+    tibble::column_to_rownames("sampleName")
+
+#### gene Annotation
+gpl2 <- getGEO("GPL9686")
+annot <- Table(gpl2)[, c("ID", "SYMBOL", "GENE_NAME", "GB_ACC")]
+head(Table(gpl2))
+# Add gene symbols to agilent_data
+head(agilent_data2$genes)
+agilent_data2$genes <- agilent_data2$genes |>
+    tidyr::separate(
+        Name,
+        into = c("GENE_SYMBOL", "Annot", "Name"),
+        sep = ":"
+    ) |>
+    dplyr::left_join(annot, by = "ID") #|>
+    mutate(is_control = factor(ifelse(is.na(SYMBOL) & is.na(GENE_NAME), "control", "gene")))
+
+agilent_data2$genes$is_control <- grepl("^(CONTROL|CTL|NC_|PC_)", agilent_data2$genes$Annot)
+
+
+table(agilent_data2$genes$is_control)    
+
+gse2 = agilent_two_color_qc(agilent_data2)
+dim(gse2)
+dim(gse1)
+gse1$targets$dataset= "dataset1"
+gse2$targets$dataset= "dataset2"
 
 #--------------------------------------------------------
-# Part 6: DE
+# Part 7: Joining both datasets
+#--------------------------------------------------------
+common_genes = intersect(gse1$genes$Name, gse2$genes$Name)
+
+# Extract normalized M- and A-values for both datasets
+M1 <- gse1$M[gse1$genes$Name %in% common_genes, ]
+M2 <- gse2$M[gse2$genes$Name %in% common_genes, ]
+# For A values (absolute expression)
+A1 <- gse1$A[match(common_genes, gse1$genes$Name), ]
+A2 <- gse2$A[match(common_genes, gse2$genes$Name), ]
+
+# Add row names
+rownames(M1) <- rownames(A1) <- common_genes
+rownames(M2) <- rownames(A2) <- common_genes
+
+# Combine M values (log ratios)
+combined_M <- cbind(M1, M2)
+
+# Combine A values (average intensities)
+combined_A <- cbind(A1, A2)
+
+# Batch correct before combining
+pacman::p_load(sva)
+# Create batch information
+batch <- c(rep(1, ncol(M1)), rep(2, ncol(M2)))
+
+# Create model matrix with intercept for ComBat
+mod <- model.matrix(~1, data = data.frame(Intercept = rep(1, ncol(combined_M))))
+
+combined_M_batch_corrected <- ComBat(
+    dat = combined_M,
+    batch = batch,
+    mod = mod
+)
+
+# Same for A values if needed
+combined_A_batch_corrected <- ComBat(
+    dat = combined_A,
+    batch = batch,
+    mod = mod
+)
+
+gse1$targets = gse1$targets |>
+    dplyr::select(atl_subtype2)
+
+gse2$targets <- gse2$targets |>
+    dplyr::select(atl_subtype2)
+# Combine phenotype data
+combined_targets <- rbind(
+    gse1$targets,
+    gse2$targets
+)
+# Verify disease status column is consistent
+table(combined_targets$atl_subtype2)
+
+gse_combined <- list(
+  M = combined_M_batch_corrected,
+  A = combined_A_batch_corrected,
+  targets = combined_targets,
+  genes = data.frame(
+    SYMBOL = common_genes,
+    stringsAsFactors = FALSE
+  ))
+
+class(gse_combined) <- c("MAList", "list")
+
+# Now you can use for differential expression
+design_combined <- model.matrix(~ 0 + factor(combined_targets$atl_subtype2)) |>
+    `colnames<-`(levels(factor(combined_targets$atl_subtype2))) |>
+    `rownames<-`(rownames(combined_targets))
+
+contrast.matrix <- makeContrasts(
+    ATL_AC = ATL - AC,
+    HAM_AC = HAMTSP - AC,
+    ATL_HD = ATL - HD,
+    HAM_HD = HAMTSP - HD,
+    AC_HD = AC - HD,
+    levels = design_combined
+)
+
+fit2 <- lmFit(gse_combined, design_combined) %>%
+    contrasts.fit(contrast.matrix) %>%
+    eBayes()
+
+top_probes <- topTable(fit2, number = Inf, adjust.method = "BH" ) |>#,  p.value = 0.01) |>
+    as.data.frame() |>
+    tibble::rownames_to_column("ID") |>
+    dplyr::left_join(annot[, c("GB_ACC", "SYMBOL")], by = c("ID" = "GB_ACC")) |>
+    dplyr::select(-ID) |>
+    dplyr::arrange(desc(adj.P.Val))
+
+top_probes$new_SYMBOL <- update_gene_symbols(top_probes$SYMBOL.y)
+head(top_probes)
+
+top_probes |>
+filter(SYMBOL.y %in% htlv_apc | new_SYMBOL %in% htlv_apc) #|>
+    arrange(desc(HAM_AC)) |>
+    head(30)
+#--------------------------------------------------------
+# Part 7: DE
 #--------------------------------------------------------
 # Create design matrix based on final_subtype
-pd7$atl_subtype2
+pd7
+design <- pd7 %>%
+    mutate(
+        atl_factor = factor(atl_subtype2)
+    ) %>%
+    modelr::model_matrix(~ 0 + atl_factor) %>%
+    as.data.frame() %>%
+    `rownames<-`(pd7$ID) |>
+    `colnames<-`(levels(factor(pd7$atl_subtype2)))
 
-design <- model.matrix(~ 0 + factor(pd7$atl_subtype2))
-design
-rownames(design) <- pd7$ID
-colnames(design) <- levels(factor(pd7$atl_subtype2))
-head(design, 20)
 
 # Make contrasts (adjust based on your comparisons)
+array_weights <- arrayWeights(gse1)
+
 levels(factor(pd7$atl_subtype2))
 contrast.matrix <- makeContrasts(
     ATL_AC = ATL - AC,
+    HAM_AC = HAMTSP - AC,
+    ATL_HAM = ATL - HAMTSP,
     levels = design
 )
-fit2 <- lmFit(gse1, design) %>%
+fit2 <- lmFit(gse1, design, weights=array_weights) %>%
     contrasts.fit(contrast.matrix) %>%
     eBayes()
 
 # Get significant probes (FDR < 0.01)
 top_probes <- topTable(fit2, number = Inf, adjust.method = "BH") #,  p.value = 0.01)
 head(top_probes)
+
+
+# Load required library
+library(org.Hs.eg.db)
+
+# Function to update gene symbols
+update_gene_symbols <- function(gene_symbols) {
+    # Map old gene symbols to new ones using org.Hs.eg.db
+    updated_symbols <- mapIds(
+        org.Hs.eg.db,
+        keys = gene_symbols,
+        column = "SYMBOL",
+        keytype = "ALIAS",
+        multiVals = function(x) paste(unique(x), collapse = ";")
+    )
+    # Replace NA values with original symbols if no mapping is found
+    updated_symbols[is.na(updated_symbols)] <- gene_symbols[is.na(updated_symbols)]
+    return(factor(updated_symbols))
+}
+head(top_probes)
+# Example: Update gene symbols in the annotation data
+top_probes$new_SYMBOL <- update_gene_symbols(top_probes$SYMBOL)
+top_probes$new_SYMBOL
+# Verify updated gene symbols
+setdiff(table$new_SYMBOL, table$SYMBOL)
+
+head(table)
+
 
 #--------------------------------------------------------
 # Part 7: Manipulation
@@ -255,7 +466,57 @@ early_tcr=c("LCK", "CD3D", "CD3E", "CD3G", "LAT", "LCP2") # ZAP70, SLP76, ITK
 
 neg_tcr=c("CD5", "PTPN6", "PTPN22","SOCS1", "CBLB", "DUSP14", "CD6", "PDCD1LG2", "PTPN12", "DOK1", "MDM2", "JUNB", "SHC1", "UBD", "ATM", "BTK", "IL1RL1", "IFNGR2", "IFNGR1", "GNAI3", "SOCS2") #DRAK2 , PTPN11
 
-colnames(top_probes)
+htlv_tcr <- c("MYD88", "CD247", "TIGIT", "CD101", "IL2RA", "CD58", "ITK", "TXK", "GATA3", "IRF4", "CBLB", "PTPN12", "ATM", "BTK", "SOCS2")
+
+htlv_apc <- c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2", "TAPBP")
+
+
+il17df = gse1$A["T75556", ] |>
+    as.data.frame() |>
+    tibble::rownames_to_column("IL17RA") |>
+    pivot_longer(-IL17RA, names_to="ID", values_to="IL17RAvalue") |>
+    dplyr::select(-ID) 
+
+top_probes |>
+filter(SYMBOL %in% htlv_apc | new_SYMBOL %in% htlv_apc) #|>
+    pull(Name)
+
+annotation_df <- data.frame(
+    row.names = pd7$ID,
+    Subtype = pd7$atl_subtype2
+)
+
+tcrneg_heatmapgenes <- gse1$A[gse1$genes$SYMBOL %in% htlv_apc, ] |>
+    as.data.frame() |>
+    tibble::rownames_to_column("GB_ACC") |>
+    left_join(annot[, c("GB_ACC", "SYMBOL")], by = c("GB_ACC")) |>
+    tibble::column_to_rownames("SYMBOL") |>
+    dplyr::select(-GB_ACC) |>
+    as.matrix()
+
+pheatmap(
+    mat = heatmapgenes,
+    scale = "row",
+    annotation_col = annotationdf,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    cellheight = 15,
+    main = "TCR Negative Regulators",
+    filename = "2504_negativeTCRregulators.png",
+    width = 10, # Nature standard single-column
+    height = 7,
+    units = "in",
+    family = "Arial" # Embed font
+)
+
+
+head(gse1)
+top_probes |>  
+  dplyr::filter(SYMBOL =="Il17ra") |>
+  tibble::rownames_to_column("ID") |>
+  pull(ID)
+    #dplyr::filter(SYMBOL %in% early_tcr) |>
+    #as_tibble() 
 
 top_probes |>
     dplyr::select(-c(1:5, 8)) |>
@@ -336,42 +597,12 @@ top_probes |>
     tidyplots::save_plot("ATLvATLc.png",
         bg = "transparent")
 
-#--------------------------------------------------------
-# Part 3B: HD - Capturing targets
-#--------------------------------------------------------
-# Subsettting files (here we have two different platforms) 
 
-pd7_2 = pd |>
-    filter(ID%in%c(paste0("GSM4723", 74:81)))
 
-agilent_data2 <- read.maimages(
-    files = file.path(".temp", id, pd7_2$file),
-    source = "genepix",
-    green.only = FALSE,
-    names = pd7_2$ID)
 #--------------------------------------------------------
 # Part 4B: Manipulating targets
 #--------------------------------------------------------
-# Convert targets to tibble for easy joining
-agilent_data2$targets = agilent_data2$targets |>
-    as_tibble(rownames = "sampleName") |>
-    left_join(pd7_2, by = c("sampleName" = "ID")) |>
-    as.data.frame() |>
-    tibble::column_to_rownames("sampleName")
 
-#### gene Annotation
-gpl2 <- getGEO("GPL9686")
-annot <- Table(gpl2)[, c("SYMBOL", "GENE_NAME", "GB_ACC")]
-
-# Add gene symbols to agilent_data
-head(agilent_data2$gene)
-agilent_data2$genes <- agilent_data2$genes |>
-    tidyr::separate(
-    Name,
-    into = c("GENE_SYMBOL", "Annot", "probename"),
-    sep = ":")  |> 
-  dplyr::left_join(annot, by=c("probename"="GB_ACC")) |>
-  mutate(is_control=factor(ifelse(is.na(SYMBOL) & is.na(GENE_NAME), "control", "gene")))
 
 #--------------------------------------------------------
 # Part 5: QC
