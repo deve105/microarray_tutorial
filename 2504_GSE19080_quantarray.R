@@ -154,7 +154,7 @@ agilent_data$genes <- agilent_data$genes |>
         )
     ))
 
-agilent_data$
+agilent_data
 table(agilent_data$genes$is_control, useNA="always")
 
 control_status
