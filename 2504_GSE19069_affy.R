@@ -1,23 +1,18 @@
 #--------------------------------------------------------
 # Title: Microarray Data Analysis with GEOquery and limma
-
-
 #GSE65823 Reanalyzed by: GSE86362 GSE119087
-
 #--------------------------------------------------------
 # Part 1: loading packages and functions
 #--------------------------------------------------------
 pacman::p_load(
     GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit
 )
-
 # function is log2transformed
 isLog2Transformed <- function(data) {
     qx <- as.numeric(quantile(data, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm = T))
     shouldBeLogged <- (qx[5] > 100) || (qx[6] - qx[1] > 50 && qx[2] > 0)
     return(!shouldBeLogged)
 }
-
 #--------------------------------------------------------
 # Part 2: Obtaining metadata and raw data
 #--------------------------------------------------------
@@ -65,6 +60,9 @@ pd <- pData(meta) |>
 
 
 ## Download all the files in the .temp of this environment
+pd$supplementary_file <- gsub("ftp://", "https://", pd$supplementary_file)
+
+
 for (i in 1:length(pd$supplementary_file)) {
     url <- pd$supplementary_file[i]
     destfile <- file.path(paste0(".temp/", id, "/", pd$file[i]))
@@ -75,7 +73,7 @@ for (i in 1:length(pd$supplementary_file)) {
         },
         error = function(e) {
             # Fallback to default method if curl fails
-            download.file(url, destfile, mode = "wb")
+            download.file(url, destfile, mode = "wb", method="auto") #"wb"
         }
     )
     # Optional: Extract if it's a tar file
@@ -103,12 +101,42 @@ pd7 = pd |>
     
 dim(pd7)
 
+pd7=pd
+
+#--------------------------------------------------------
+# Part 4: Capturing genes
+#--------------------------------------------------------
 #### gene Annotation
 gpl2 <- getGEO("GPL570")
 annot <- Table(gpl2)[,c("ID", "GB_ACC", "Gene Symbol", "Gene Title", "ENTREZ_GENE_ID")] #|>
     tibble::column_to_rownames("ID")
+annot
 
-# Re-read the raw files, this was a quantarray (described in metadata)
+#--------------------------------------------------------
+# Part 5: Rereading probes 
+#--------------------------------------------------------
+affy_raw<- oligo::read.celfiles(
+    filenames = file.path(".temp", id, pd7$file),
+    sampleNames = pd7$ID
+)
+oligo_rma <- oligo::rma(affy_raw)
+
+oligo_rma
+protocolData(oligo_rma)
+
+
+image(affy_raw[,1], main="Raw intensities")
+library(arrayQualityMetrics)
+# Automated QC report with arrayQualityMetrics
+arrayQualityMetrics(expressionset=oligo_rma,
+                    outdir="QC_report",
+                    force=TRUE,
+                    do.logtransform=FALSE)
+library(affyPLM)
+plm_fit <- fitPLM(affy_raw)
+image(plm_fit, which=1, main="Residual plot - first array")
+### An older option is to use ReadAffy
+# Re-read the raw files
 affy_data = ReadAffy(
     filenames=pd7$file,
     sampleNames = pd7$ID,
@@ -117,11 +145,6 @@ affy_data = ReadAffy(
 
 affy_rma = rma(affy_data)
 
-methods(class=class(affy_data))
-protocolData(affy_data)
-
-
-head(affy_data)
 #--------------------------------------------------------
 # Part 6: DE
 #--------------------------------------------------------

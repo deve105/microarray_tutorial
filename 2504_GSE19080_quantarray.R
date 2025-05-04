@@ -14,12 +14,8 @@ Agilent two colors, but HD were read in a different protocol.
 pacman::p_load(
     GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots
     , affy
-    , oligoClasses, testit, httpgd
+    , oligoClasses, testit, httpgd, org.Hs.eg.db
 )
-
-
-# Load required library
-library(org.Hs.eg.db)
 
 # function is log2transformed
 isLog2Transformed <- function(data) {
