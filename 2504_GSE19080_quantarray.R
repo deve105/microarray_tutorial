@@ -1,18 +1,17 @@
 #--------------------------------------------------------
 # Title: Microarray Data Analysis with GEOquery and limma
 """
-#- Gene expression profiling in patients infected with HTLV-1: Identification of ATL and HAM/TSP-specific genetic profiles
-
+#- Gene expression profiling in patients infected with HTLV-1: 
+Identification of ATL and HAM/TSP-specific genetic profiles
 Customized CHIP
-gene expression profiles of CD4+ T-cells isolated from 7 ATL, 12 HAM/TSP and 11 AC (asymptomatic carriers).
+Gene expression profiles of CD4+ T-cells isolated from 7 ATL, 12 HAM/TSP and 11 AC (asymptomatic carriers).
 Agilent two colors, but HD were read in a different protocol.
-
 """
 #--------------------------------------------------------
 # Part 1: loading packages and functions
 #--------------------------------------------------------
 pacman::p_load(
-    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit
+    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit, org.Hs.eg.db
 )
 
 # function is log2transformed
@@ -22,6 +21,20 @@ isLog2Transformed <- function(data) {
     return(!shouldBeLogged)
 }
 
+# Function to update gene symbols
+update_gene_symbols <- function(gene_symbols) {
+    # Map old gene symbols to new ones using org.Hs.eg.db
+    updated_symbols <- mapIds(
+        org.Hs.eg.db,
+        keys = gene_symbols,
+        column = "SYMBOL",
+        keytype = "ALIAS",
+        multiVals = function(x) paste(unique(x), collapse = ";")
+    )
+    # Replace NA values with original symbols if no mapping is found
+    updated_symbols[is.na(updated_symbols)] <- gene_symbols[is.na(updated_symbols)]
+    return(factor(updated_symbols))
+}
 #--------------------------------------------------------
 # Part 2: Obtaining metadata and raw data
 #--------------------------------------------------------
@@ -44,15 +57,7 @@ meta <- meta[[1]]
 head(fData(meta), 2)
 head(exprs(meta), 2)
 pData(meta)
-dim(fData(meta))
-colnames(exprs(meta))
-dim(meta)
-head(pData(meta), 5)
-head(fData(meta))
 
-annotx = fData(meta) #>
-annotx |>
-    filter(GENE_NAME=="")
 
 # Metadata wrangling
 pd <- pData(meta) |>
@@ -71,8 +76,6 @@ pd <- pData(meta) |>
         str_detect(atl_subtype, "Healthy") ~ "HD",
         .default = NA
     ))
-
-pd7 = pd 
 
 ## Download all the files in the .temp of this environment
 for (i in 1:length(pd7$supplementary_file)) {
@@ -94,6 +97,7 @@ for (i in 1:length(pd7$supplementary_file)) {
     }
 }
 
+pd7
 #--------------------------------------------------------
 # Part 3: Capturing targets
 #--------------------------------------------------------
@@ -115,7 +119,6 @@ agilent_data <- read.maimages(
     names = pd7$ID,
     other.columns = list(Flag = "Ignore Filter"))
 
-
 #--------------------------------------------------------
 # Part 4: Manipulating targets
 #--------------------------------------------------------
@@ -126,10 +129,8 @@ agilent_data$targets = agilent_data$targets |>
     as.data.frame() |>
     tibble::column_to_rownames("sampleName")
 
-
 #### gene Annotation
 gpl2 <- getGEO("GPL9686")
-
 annot <- Table(gpl2)[, c("SYMBOL", "GB_ACC", "ID")]
 annot$dataset <- "GPL9686"
 """
@@ -139,10 +140,7 @@ SSC: Salmon Sperm DNA (unrelated to human targets)
 """
 controls=c("Arabidopsis", "SSC", "BLANK")
 
-
-head(agilent_data$genes)
 # Add gene symbols to agilent_data
-
 agilent_data$genes <- agilent_data$genes |>
     dplyr::select(Name) |>
     dplyr::left_join(annot, by = c("Name" = "GB_ACC")) |>
@@ -156,8 +154,6 @@ agilent_data$genes <- agilent_data$genes |>
 
 agilent_data
 table(agilent_data$genes$is_control, useNA="always")
-
-control_status
 #--------------------------------------------------------
 # Part 5: QC
 #--------------------------------------------------------
@@ -225,7 +221,94 @@ pca |>
     tibble::rownames_to_column("ID") |>
     dplyr::left_join(pd7, by="ID") |> 
     tidyplots::tidyplot(x=PC1, y=PC2, color=atl_subtype) |>
-    tidyplots::add_data_points()
+    tidyplots::add_data_points() 
+
+
+##### Updateing Symbols
+gse1$genes$new_symbol <- update_gene_symbols(gse1$genes$SYMBOL)
+
+
+htlv_apc <- c(
+    "B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G",
+    "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10",
+    "TAP1", "TAP2", "TAPBP", "CD74", "HLA-DRA", "HLA-DRB1",
+    "HLA-DPA1", "HLA-DPB1", "HLA-DQA1", "HLA-DQB1", "HLA-DMA",
+    "HLA-DMB", "HLA-DOA", "HLA-DOB", "CD1A", "CD1B", "CD1C", "CD1D",
+    "HLA-DRB5", "HLA-DQA2", "HLA-DQB2", "HLA-DRA2", "HLA-DRB3",
+    "HLA-DRB4", "HLA-DRB6", "HLA-DRB7", "HLA-DRB8", "HLA-DRB9",
+    "CD83", "CD86", "CD80", "CD40", "CD274", "PDCD1LG2", "CTLA4",
+    "ICOS", "TNFRSF4", "TNFRSF9", "TNFRSF18", "TNFRSF25", "TNFRSF14",
+    "TNFRSF8", "TNFRSF7", "TNFRSF13B", "TNFRSF13C", "TNFRSF17",
+    "TNFRSF21", "TNFRSF19", "TNFRSF15", "LCK", "CD3D", "CD3E",
+    "CD3G", "LAT", "LCP2", "ZAP70", "ITK", "CD5", "PTPN6", "PTPN22",
+    "SOCS1", "CBLB", "DUSP14", "CD6", "PTPN12", "DOK1", "MDM2",
+    "JUNB", "SHC1", "UBD", "ATM", "BTK", "IL1RL1", "IFNGR2", "IFNGR1",
+    "GNAI3", "SOCS2", "STK17B", "PTPN11", "IL2RA", "CD58", "TXK",
+    "GATA3", "IRF4", "MYD88", "CD247", "TIGIT", "CD101", "LYK", "PSCTK2", "EMT"
+)
+
+matrix_apc = gse1[(gse1$genes$SYMBOL %in% significant), ]
+colnames(matrix_apc)
+head(pd7)
+annotation_data <- data.frame(
+    Disease = pd7$atl_subtype2,
+    row.names = pd7$ID
+)
+pheatmap(
+    mat = matrix_apc,
+    scale = "row",
+    annotation_col = annotation_data,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    cellheight = 15,
+    main = "CD8 Signature across Skin Lesions from ATL and MF",
+    #filename = "2505_CD8_heatmap.png",
+    width = 8, # Nature standard single-column
+    height = 7,
+    units = "in",
+    family = "Arial",
+)
+
+#--------------------------------------------------------
+# Create design matrix based on final_subtype
+pd7
+design <- pd7 %>%
+    mutate(
+        atl_factor = factor(atl_subtype2)
+    ) %>%
+    modelr::model_matrix(~ 0 + atl_factor) %>%
+    as.data.frame() %>%
+    `rownames<-`(pd7$ID) |>
+    `colnames<-`(levels(factor(pd7$atl_subtype2)))
+
+
+# Make contrasts (adjust based on your comparisons)
+array_weights <- arrayWeights(gse1)
+
+levels(factor(pd7$atl_subtype2))
+contrast.matrix <- makeContrasts(
+    ATL_AC = ATL - AC,
+    HAM_AC = HAMTSP - AC,
+    ATL_HAM = ATL - HAMTSP,
+    levels = design
+)
+fit2 <- lmFit(gse1, design, weights = array_weights) %>%
+    contrasts.fit(contrast.matrix) %>%
+    eBayes()
+
+# Get significant probes (FDR < 0.01)
+top_probes <- topTable(fit2, number = Inf, adjust.method = "BH") #,  p.value = 0.05)
+
+top_probes |>
+    dplyr::filter(grepl(paste(htlv_apc, collapse = "|"), new_symbol))
+    
+significant = top_probes |>
+    dplyr::filter(SYMBOL %in% htlv_apc | new_symbol %in% htlv_apc) |>
+    pull(SYMBOL) #
+    arrange(desc(ATL_AC)) |>
+    head(30)
+
+
 #--------------------------------------------------------
 # Part 6: Read the additiional data *Healthy donors*
 #--------------------------------------------------------
@@ -423,23 +506,7 @@ top_probes <- topTable(fit2, number = Inf, adjust.method = "BH") #,  p.value = 0
 head(top_probes)
 
 
-# Load required library
-library(org.Hs.eg.db)
 
-# Function to update gene symbols
-update_gene_symbols <- function(gene_symbols) {
-    # Map old gene symbols to new ones using org.Hs.eg.db
-    updated_symbols <- mapIds(
-        org.Hs.eg.db,
-        keys = gene_symbols,
-        column = "SYMBOL",
-        keytype = "ALIAS",
-        multiVals = function(x) paste(unique(x), collapse = ";")
-    )
-    # Replace NA values with original symbols if no mapping is found
-    updated_symbols[is.na(updated_symbols)] <- gene_symbols[is.na(updated_symbols)]
-    return(factor(updated_symbols))
-}
 head(top_probes)
 # Example: Update gene symbols in the annotation data
 top_probes$new_SYMBOL <- update_gene_symbols(top_probes$SYMBOL)

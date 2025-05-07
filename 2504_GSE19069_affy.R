@@ -1,6 +1,9 @@
 #--------------------------------------------------------
 # Title: Microarray Data Analysis with GEOquery and limma
-
+"""
+Molecular signatures in peripheral T-cell lymphoma (PTCL)
+Gene expression profiling was performed on PTCL and natural-killer cell lymphoma (NKCL) to define molecular classifiers for the more common entities of PTCL, to identify unique entities within PTCL-U, to elucidate unique tumor and microenvironmental interactions and oncogenic pathways in AITL, and to construct a molecular prognosticator for AITL.
+"""
 
 #GSE65823 Reanalyzed by: GSE86362 GSE119087
 
@@ -62,7 +65,7 @@ pd <- pData(meta) |>
         str_detect(title, "prolymphocytic") ~ "PLL",
          str_detect(title, "Lymphoid") ~ "Lymph",
         .default = NA)) 
-
+pd
 
 ## Download all the files in the .temp of this environment
 for (i in 1:length(pd$supplementary_file)) {
@@ -105,23 +108,80 @@ dim(pd7)
 
 #### gene Annotation
 gpl2 <- getGEO("GPL570")
-annot <- Table(gpl2)[,c("ID", "GB_ACC", "Gene Symbol", "Gene Title", "ENTREZ_GENE_ID")] #|>
+annot <- Table(gpl2)[, c("ID", "GB_ACC", "Gene Symbol", "Gene Title", "ENTREZ_GENE_ID", "Sequence Type")] #|>
     tibble::column_to_rownames("ID")
 
 # Re-read the raw files, this was a quantarray (described in metadata)
+
+pd7=pd
 affy_data = ReadAffy(
     filenames=pd7$file,
     sampleNames = pd7$ID,
     celfile.path = file.path(".temp", id)
 )
+table(pd$type)
 
 affy_rma = rma(affy_data)
-
 methods(class=class(affy_data))
 protocolData(affy_data)
 
+#--------------------------------------------------------
+# Part 4: 
+#--------------------------------------------------------
+all(rownames(exprs(affy_rma)) == featureNames(affy_rma))
+probeids = featureNames(affy_rma)
 
-head(affy_data)
+head(Table(gpl2),3)
+data.frame(phenoData(affy_rma))
+expr_matrix <- exprs(affy_rma)
+head(expr_matrix[,1:5])
+
+cd8sign <- c(
+    "CD8A", "CD8B", "GZMB", "GZMA", "GZMH", "PRF1",
+    "IFNG", "EOMES", "TBX21", "KLRG1", "CCL5", "NKG7", "IL2RB"
+)
+htlv_apc <- c("B2M", "HLA-A", "HLA-B", "HLA-C", "HLA-E", "HLA-F", "HLA-G", "ERAP1", "NLRC5", "PSMB1", "PSMB2", "PSMB8", "PSMB9", "PSMB10", "TAP1", "TAP2", "TAPBP")
+
+probeid_detect = annot |>
+    dplyr::rename(Symbol="Gene Symbol") |>
+    dplyr::filter(Symbol%in%htlv_apc)  |>
+    pull(ID)
+
+htlv_matrix = expr_matrix[probeid_detect, ] 
+
+htlv_annotation = expr_matrix[probeid_detect, ]|>
+    as.data.frame() |>
+    tibble::rownames_to_column("ID") |>
+    dplyr::left_join(annot[, c("ID", "Gene Symbol", "Sequence Type")], by = "ID") |>
+    dplyr::select(-`Sequence Type`, -ID) #|> 
+    tibble::column_to_rownames("Gene Symbol") |>
+    as.matrix()
+
+annotation_data <- data.frame(
+    Disease =  pd$type, 
+    Infiltration = pd$ptcl,
+    row.names = pd$ID)
+
+pd = pd |>
+    dplyr::mutate(type = ifelse(str_detect(ptcl, "ATL"), "ATL", type))
+
+
+pheatmap(
+    mat = htlv_matrix,
+    scale = "row",
+    annotation_col = annotation_data,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    cellheight = 15,
+    main = "CD8 Signature across Skin Lesions from ATL and MF",
+    #filename = "2505_CD8_heatmap.png",
+    width = 8, # Nature standard single-column
+    height = 7,
+    units = "in",
+    family = "Arial",
+)
+ 
+head(annot$"Gene Symbol", 100)
 #--------------------------------------------------------
 # Part 6: DE
 #--------------------------------------------------------
