@@ -1,4 +1,70 @@
+Affymetrix Pre-Processing Steps
+1. Background correction
+2. Normalization (Intra, then Inter)
+   - Gaussian Spatial Smoothing
+   - Loess Smoothing
+   - Robust Splines
+3. Probe-specific adjustment
+4. Summarizing multiple probes
+5. 
+Edwards: fast and accurate.
+NormExp: Slow, Better
+Kooperberg: Very Slow, Best accuracy
+### Approach 1: MAS5
+
+Observations = True Signal + Random Noise + Probe Effects
+
+#### MAS5: Background and Noise
+Background:
+Divide chip into zones, select 2% lowest intensity values, stdev of these zones are the zone variability.
+Background at any location is the summ of all zones background, weighted by 1/((distance^2) + fudge factor)
+
+Noise:
+stdev of lowest 2% background is zone noise.
+Noise at any location is the sum of all noise.
+
+#### MAS5: Adjusted Intensity
+A= Intensity minus background
+Ideal Mismatch
+Signal
+Used for clinical settings.
+Sacrifices precision for accuracy.
+
+#### RMA: Robust Multi-Array
+Down weighting outliers.
+Log scale linear additive model. (Assumes all the chip have the same background distribution). Not use the mistmach probe data.
+
+Ignoring MM decreases accuracy but increases precision. (GCRMA)
+
+#### GCRMA: Gene Chip Robust Multi-Array
+Not appropriate for clinical settings due to higher computational requirements. However, it provides higher sensitivity and specificity compared to RMA. GCRMA reduces variance by incorporating probe sequence information and adjusting for non-specific binding.
+
+Quantile Normalization based on QQplot. (Density PM plot)
 differentialexpression, transcript discovery, splice variants, allele-specific expression
+
+Summarization: combining multiple probe intensities. (Additive linear model)
+Tukey's Median polish
+
+### Checking QC
+
+Distribution for quantile normalization.
+Intersample correlations.
+3' to 5' trend across a ProbeSet.
+
+"""
+Dice example to explain p-values
+I need a six to win
+"""
+
+Sample: Frozen vs FFPE
+Total-RNA vs Poly-A-RNA
+
+INKJet Array = Agilent
+Photolithographic Arrays - Affymetrix (best quality)
+Bead Arrays = Illumina
+Assessing pre-processing results.
+Univariate statistical approaches.
+ProbeSet remapping.
 
 1) Raw-data: Short sequence reads
 2) Mapping: splice junctions

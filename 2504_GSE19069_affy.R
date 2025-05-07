@@ -6,21 +6,18 @@ Gene expression profiling was performed on PTCL and natural-killer cell lymphoma
 """
 
 #GSE65823 Reanalyzed by: GSE86362 GSE119087
-
 #--------------------------------------------------------
 # Part 1: loading packages and functions
 #--------------------------------------------------------
 pacman::p_load(
     GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit
 )
-
 # function is log2transformed
 isLog2Transformed <- function(data) {
     qx <- as.numeric(quantile(data, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm = T))
     shouldBeLogged <- (qx[5] > 100) || (qx[6] - qx[1] > 50 && qx[2] > 0)
     return(!shouldBeLogged)
 }
-
 #--------------------------------------------------------
 # Part 2: Obtaining metadata and raw data
 #--------------------------------------------------------
@@ -68,6 +65,9 @@ pd <- pData(meta) |>
 pd
 
 ## Download all the files in the .temp of this environment
+pd$supplementary_file <- gsub("ftp://", "https://", pd$supplementary_file)
+
+
 for (i in 1:length(pd$supplementary_file)) {
     url <- pd$supplementary_file[i]
     destfile <- file.path(paste0(".temp/", id, "/", pd$file[i]))
@@ -78,7 +78,7 @@ for (i in 1:length(pd$supplementary_file)) {
         },
         error = function(e) {
             # Fallback to default method if curl fails
-            download.file(url, destfile, mode = "wb")
+            download.file(url, destfile, mode = "wb", method="auto") #"wb"
         }
     )
     # Optional: Extract if it's a tar file
@@ -106,6 +106,11 @@ pd7 = pd |>
     
 dim(pd7)
 
+pd7=pd
+
+#--------------------------------------------------------
+# Part 4: Capturing genes
+#--------------------------------------------------------
 #### gene Annotation
 gpl2 <- getGEO("GPL570")
 annot <- Table(gpl2)[, c("ID", "GB_ACC", "Gene Symbol", "Gene Title", "ENTREZ_GENE_ID", "Sequence Type")] #|>
