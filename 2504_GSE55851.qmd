@@ -385,11 +385,14 @@ zcchc12 = newgse$E[rownames(newgse$E)=="NM_173798",]|>
     tibble::column_to_rownames("sampleName") 
 
 colnames(zcchc12) = c("exp", "cd7")
-zcchc12
 
-ggplot( aes(x=cd7, color=cd7, y=exp), data=zcchc12 ) +
-    geom_bar()
+write.csv(zcchc12, "zcchc12.csv")
 
+zcchc12# |>
+ggplot(aes(x=cd7, color=cd7, y=exp)) +
+    geom_point()
+    tidyplots::add_data_points_beeswarm()
+pacman::p_unload(purr)
 plot1
 head(newgse$E)
 ```
