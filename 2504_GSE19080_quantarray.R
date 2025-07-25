@@ -55,6 +55,9 @@ meta <- meta[[1]]
 
 #Basic exploration of the metadata
 head(fData(meta), 2)
+
+fData(meta) |>
+    dplyr::filter(GENE_NAME == "ZCCHC12")
 head(exprs(meta), 2)
 pData(meta)
 
@@ -291,13 +294,15 @@ contrast.matrix <- makeContrasts(
     ATL_HAM = ATL - HAMTSP,
     levels = design
 )
-fit2 <- lmFit(gse1, design, weights = array_weights) %>%
+fit2 <- lmFit(gse1, design) %>%
     contrasts.fit(contrast.matrix) %>%
     eBayes()
 
-# Get significant probes (FDR < 0.01)
-top_probes <- topTable(fit2, number = Inf, adjust.method = "BH") #,  p.value = 0.05)
+gse1$genes$gene
 
+# Get significant probes (FDR < 0.01)
+top_probes <- topTable(fit2, number = Inf, adjust.method = "BH",  p.value = 0.01)
+top_probes
 top_probes |>
     dplyr::filter(grepl(paste(htlv_apc, collapse = "|"), new_symbol))
     
@@ -306,8 +311,10 @@ significant = top_probes |>
     pull(SYMBOL) #
     arrange(desc(ATL_AC)) |>
     head(30)
-
-
+colnames(top_probes)
+top_probes |>
+    arrange(desc(ATL_AC)) |>
+    head(100)
 #--------------------------------------------------------
 # Part 6: Read the additiional data *Healthy donors*
 #--------------------------------------------------------
