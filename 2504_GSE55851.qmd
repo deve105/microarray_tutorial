@@ -325,7 +325,6 @@ contrast.matrix <- makeContrasts(
 # This is for downstream analysis of CD7 and CADM1 populations
 contrast.matrix <- makeContrasts(
     CD7N_CD7P = CD7N - CD7P,
-    CD7D_CD7P = CD7D - CD7P,
     levels = design
 )
 
@@ -378,19 +377,19 @@ gse$genes |>
 head(50)
 head(table, 30)
 
-zcchc12=newgse$E[rownames(newgse$E)=="NM_173798",]
-
-plot1=zcchc12 |>
+zcchc12 = newgse$E[rownames(newgse$E)=="NM_173798",]|>
     as.data.frame() |>
     as_tibble(rownames = "sampleName") |>
     left_join(pd[c("ID", "cd7")], by = c("sampleName" = "ID")) |>
     as.data.frame() |>
-    tibble::column_to_rownames("sampleName") |>
-    filter(cd7!="CD7D") |>
-    tidyplots::tidyplot(x=cd7, color=cd7, y=zcchc12) |>
-    tidyplots::add_median_bar() |>
-    tidyplots::add_test_pvalue()|>
-    tidyplots::save_plot("zzcchc12.png", bg="transparent")
+    tibble::column_to_rownames("sampleName") 
+
+colnames(zcchc12) = c("exp", "cd7")
+zcchc12
+
+ggplot( aes(x=cd7, color=cd7, y=exp), data=zcchc12 ) +
+    geom_bar()
+
 plot1
 head(newgse$E)
 ```
