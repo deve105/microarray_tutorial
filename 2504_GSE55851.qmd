@@ -388,11 +388,19 @@ colnames(zcchc12) = c("exp", "cd7")
 
 write.csv(zcchc12, "zcchc12.csv")
 
-zcchc12# |>
-ggplot(aes(x=cd7, color=cd7, y=exp)) +
-    geom_point()
-    tidyplots::add_data_points_beeswarm()
-pacman::p_unload(purr)
+pacman::p_load(tidyverse, tidyplots)
+zcchc12 = read_csv("/Users/denriquez/Documents/GitHub/microarray_tutorial/zcchc12.csv")
+zcchc12 |>
+tidyplot(x=cd7, color=cd7, y=exp) |>
+    tidyplots::add_data_points_beeswarm() |>
+    tidyplots::add_violin() |>
+    tidyplots::add_test_pvalue() |>
+    tidyplots::adjust_x_axis(title="CD4+ T-Lymphocytes", labels=c("CD7(-)CADM1(+)\nMalignant", "CD7(+),CADM1(-)\nNormal")) |>
+    tidyplots::adjust_y_axis(title="ZCCHC12\nLog2(Exp)") |>
+    tidyplots::remove_caption() |>
+    tidyplots::remove_legend() |>
+    tidyplots::save_plot("zcchc12_n_p.png", bg="transparent")
+
 plot1
 head(newgse$E)
 ```
