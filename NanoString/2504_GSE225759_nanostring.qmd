@@ -1,0 +1,831 @@
+
+# Gene Expression Signatures for the Accurate Diagnosis of Peripheral T-Cell Lymphoma Entities in the Routine Clinical Practice
+
+```{r}
+#--------------------------------------------------------
+# Part 1: loading packages and functions
+#--------------------------------------------------------
+pacman::p_load(
+    GEOquery, tidyverse, ggrepel, limma, oligo, DT, pheatmap, tidyplots, affy, oligoClasses, testit, NanoStringNCTools, NanoStringDiff
+)
+# function is log2transformed
+isLog2Transformed <- function(data) {
+    qx <- as.numeric(quantile(data, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm = T))
+    shouldBeLogged <- (qx[5] > 100) || (qx[6] - qx[1] > 50 && qx[2] > 0)
+    return(!shouldBeLogged)
+}
+#--------------------------------------------------------
+# Part 2: Obtaining metadata and raw data
+#--------------------------------------------------------
+# First obtain metadata
+id <- "GSE225759" # GPL4133
+
+# creating a temp folder
+if (!dir.exists(paste0(".temp/", id))) {
+    dir.create(paste0(".temp/", id))
+} else {
+    message("Folder already exists!")
+}
+
+# Obtaining Metadata
+metaff <- getGEO(id, GSEMatrix = TRUE, getGPL = FALSE, destdir = ".temp")
+length(metaff)
+
+meta <- metaff[[1]]
+colnames(exprs(meta))
+head(pData(meta))
+meta
+# Metadata wrangling
+metadata <- pData(meta) |>
+    dplyr::rename(
+        caseID = "case # from supplemental table9 (pmid35839444):ch1",
+        nanostring = "nanosstringclass:ch1",
+    ) |>
+    dplyr::select(
+        geo_accession,
+        characteristics_ch1.5,
+        supplementary_file,
+        nanostring,
+        caseID
+    ) |>
+    dplyr::rename(
+        subtype = "characteristics_ch1.5"
+    ) |>
+    mutate(
+        subtype = str_remove(subtype, "nanostringclass: "),
+        subtype = str_replace_na(subtype, ""),
+        nanostring = str_replace_na(nanostring, ""),
+        final_subtype = stringr::str_c(subtype, nanostring)
+    ) |>
+    dplyr::mutate(file = str_split(supplementary_file, "/") |> map_chr(tail, 1)) |>
+    select(
+        geo_accession,
+        supplementary_file,
+        caseID,
+        final_subtype, file) |>
+    dplyr::mutate(final_subtype = dplyr::recode(final_subtype,
+        ATLL = "ATLL",
+        "PTCL-TBX21" = "PTCLTBX",
+        "PTCL-GATA3" = "PTCLGATA",
+        "ALCL-neg" = "ALCLneg",
+        "ALCL-pos" = "ALCLpos",
+        "Intermediate AITL/TBX21" = "iAITLTBX21", 
+        "Intermediate.AITL/GATA3" = "iAITLGATA3", 
+        "Intermediate AITL/GATA3" = "iAITLGATA3"
+    )) |>
+    dplyr::filter(!final_subtype %in% c("iAITLTBX21","iAITLGATA3"))
+    #|>
+    filter(final_subtype %in% c("ATLL", "PTCLTBX", "PTCLGATA", "ENKTL" ))
+
+(metadata$final_subtype)
+#--------------------------------------------------------
+# Part 3: Fetching data
+#--------------------------------------------------------
+## Not following this
+options(download.file.method = "curl")
+raw <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE225nnn/GSE225759/suppl/GSE225759_RAW.tar"
+matrix <- "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE225nnn/GSE225759/matrix/GSE225759_series_matrix.txt.gz"
+download.file(matrix, destfile = "./.temp/GSE225759.gz", method = "curl")
+dir.create("./.temp", showWarnings = FALSE, recursive = TRUE)
+options(GEOquery.integrate.https = FALSE)
+###########################
+
+## Download all the files in the .temp of this environment
+for (i in 1:length(metadata$supplementary_file)) {
+    url <- metadata$supplementary_file[i]
+    destfile <- file.path(paste0(".temp/", id, "/", metadata$file[i]))
+    # Download the file
+    tryCatch(
+        {
+            download.file(url, destfile, mode = "wb", method = "curl")
+        },
+        error = function(e) {
+            # Fallback to default method if curl fails
+            download.file(url, destfile, mode = "wb")
+        }
+    )
+    # Optional: Extract if it's a tar file
+    if (grepl("\\.tar(\\.gz)?$", destfile)) {
+        untar(destfile, exdir = paste0(".temp/", id))
+    }
+}
+
+#####################################################
+# testing subtypes, it has supplementary files links
+unique(metadata$final_subtype)
+datatable(metadata)
+atl_ptcl_geo <- metadata |>
+    filter(final_subtype %in% c("ATLL", "PTCL-TBX21", "PTCL-GATA3", "ENKTL", "AITL", "ALCL-pos", "ALCL-neg", "Intermediate AITL/TBX21", "Intermediate.AITL/GATA3", "Intermediate AITL/GATA3")) |>
+    pull(geo_accession)
+
+
+```
+
+
+```{r}
+#--------------------------------------------------------
+# Part 3: Reading nanostring data
+#--------------------------------------------------------
+# Read each file individually and check feature names
+feature_lists <- lapply(file.path(".temp", id, validation$file), function(f) {
+  dat <- readNanoStringRccSet(rccFiles = f)
+  rownames(dat)
+})
+
+# Compare all files against the first file - Validation set has been readed in two different files
+mismatches <- sapply(feature_lists, function(feats) !identical(feats, feature_lists[[1]]))
+bad_files <- validation$file[mismatches]
+
+print(bad_files)  # Files that don't match the first file
+
+#--------------------------------------------------------
+# Part 3A: Training data 1
+#--------------------------------------------------------
+######### Part 1 - Subsetting 
+training = metadata |>
+  dplyr::filter(str_detect(file, "Training"))
+######### Part 2 - reading subset
+training_set <- readNanoStringRccSet(
+  rccFiles = file.path(".temp", id, training$file),
+  )
+######### Part 3 - merging metadata
+pData(training_set) = pData(training_set) |>
+  tibble::rownames_to_column("ID") |>
+  dplyr::left_join(metadata %>% dplyr::select(-supplementary_file), by=c("ID"="file")) |>
+  tibble::column_to_rownames("geo_accession")
+
+colnames(exprs(training_set)) <- rownames(pData(training_set))
+dim(training_set)
+#--------------------------------------------------------
+# Part 3B: QC
+#--------------------------------------------------------
+######### Part 4 - QC
+# Basic metrics
+qc_metrics <- sData(training_set)
+barplot(qc_metrics$FovCount, main = "Fields of View", las = 2)
+barplot(qc_metrics$BindingDensity, main = "Binding Density", las = 2)
+abline(h = c(0.05, 2.25), col = "red")  # Recommended range <2.25
+
+# Check positive controls (should show linearity)
+pos_controls_features <- fData(training_set)[fData(training_set)$CodeClass == "Positive", ]
+# Get corresponding expression data
+pos_exprs <- exprs(training_set)[rownames(pos_controls_features), ]
+boxplot(pos_exprs, las=2, log="y", main="Positive Controls")
+
+# Linear plot with expected concentrations
+# Extract concentrations from control names (e.g., POS_A(128))
+pos_exprs
+conc <- as.numeric(gsub(".*\\((.*)\\).*", "\\1", rownames(pos_exprs)))
+pos_means <- rowMeans(pos_exprs)
+
+# Plot expected vs observed
+plot(log2(conc), log2(pos_means), 
+     main="Positive Control Linearity",
+     xlab="Log2 Expected Concentration", 
+     ylab="Log2 Observed Counts",
+     pch=16)
+abline(lm(log2(pos_means) ~ log2(conc)), col="red")
+
+# Calculate R-squared for linearity assessment
+model <- lm(log2(pos_means) ~ log2(conc))
+r_squared <- summary(model)$r.squared
+text(min(log2(conc)), max(log2(pos_means)), 
+     paste("R² =", round(r_squared, 3)),
+     pos=4)
+
+# Check negative controls (should show linearity)
+neg_controls_features <- fData(training_set)[fData(training_set)$CodeClass == "Negative", ]
+neg_exprs <- exprs(training_set)[rownames(neg_controls_features), ]
+# Get corresponding expression data
+boxplot(neg_exprs+1, las=2, log="y", main="Negative Controls")
+
+# Check housekeeping genes (should be consistent)
+housekeeping_features <- fData(training_set)[fData(training_set)$CodeClass == "Housekeeping", ]
+house_exprs <- exprs(training_set)[rownames(housekeeping_features), ]
+boxplot(house_exprs +1, las = 2, log="y", main = "Housekeeping Genes")
+```
+```{r}
+#--------------------------------------------------------
+# Part 3D: Normalization
+#--------------------------------------------------------
+colnames(exprs(training_set)) <- rownames(pData(training_set))
+normalized_matrix <- normalize(training_set, 
+"Housekeeping-Log2")
+normalized_matrixv2 <- normalize(training_set, 
+"Housekeeping-Log2")
+exprs(normalized_matrix) = assayData(normalized_matrix)$exprs_norm
+
+exprs(normalized_matrix) <- log2(exprs(normalized_matrix) + 1)
+
+# Verify normalization
+boxplot(exprs(normalized_matrix), main = "After Log2 Transform", las = 2)
+
+# PCA analysis
+pca_result <- prcomp(t(exprs(normalized_matrix)))
+
+plot(pca_result$x[,1], pca_result$x[,2], 
+     col = as.factor(pData(normalized_matrix)$final_subtype),
+     pch = 16, main = "PCA Plot")
+legend("topright", legend = levels(as.factor(pData(normalized_matrix)$final_subtype)),
+       col = 1:length(levels(as.factor(pData(normalized_matrix)$final_subtype))),
+       pch = 16)
+
+
+
+biological_genes <- fData(normalized_matrix)[fData(normalized_matrix)$CodeClass == "Endogenous", ]
+filtered_matrix <- normalized_matrix[rownames(biological_genes), ]
+exprs(filtered_matrix)
+
+normalized_matrix
+#--------------------------------------------------------
+# Part 4: Downstream
+#--------------------------------------------------------
+
+# Matrix Design
+design <- model.matrix(~ 0 + factor(pData(normalized_matrix)$final_subtype))
+
+rownames(design) <- rownames(pData(normalized_matrix))
+colnames(design) <- levels(factor(pData(normalized_matrix)$final_subtype))
+head(design, 20)
+pData(normalized_matrix)$final_subtype
+# Make contrasts (adjust based on your comparisons)
+colnames(design)
+contrast.matrix <- makeContrasts(
+  ATLL_vs_PTCLTBX = ATLL - PTCLTBX,
+  ATLL_vs_PTCLGATA = ATLL - PTCLGATA,
+  ATLL_vs_ENKTL = ATLL - ENKTL,
+  ATLL_vs_AITL = ATLL - AITL,
+  ATLL_vs_ALCLpos = ATLL - ALCLpos,
+  ATLL_vs_ALCLneg = ATLL - ALCLneg,
+  levels = design
+)
+
+fit2 <- lmFit(filtered_matrix, design) %>%
+    contrasts.fit(contrast.matrix) %>%
+    eBayes()
+
+top_probes <- topTable(fit2, number = Inf,  adjust.method = "BH") #, p.value = 0.05)
+
+# Add ProbeID as a column and gene names
+top_probes_export <- top_probes %>%
+  tibble::rownames_to_column("ProbeID") %>%
+  left_join(
+    fData(normalized_matrix) %>%
+      tibble::rownames_to_column("ProbeID") %>%
+      select(ProbeID, GeneName),
+    by = "ProbeID"
+  )
+
+# Save the enriched version
+write.csv(top_probes_export, file = "2506_top_probes_annotated_results.csv", row.names = FALSE)
+
+top_genes <- top_probes %>%
+  tibble::rownames_to_column("ProbeID") %>%
+  left_join(
+    fData(normalized_matrix) %>%
+      tibble::rownames_to_column("ProbeID") %>%
+      select(ProbeID, GeneName),
+    by = "ProbeID"
+  )
+top_genes |>
+  arrange(desc(ATLL_vs_ALCLpos)) |>
+  dplyr::filter(adj.P.Val < 0.01)
+
+top_genes |>
+    arrange(desc(ATLL_vs_PTCLTBX))  |>
+    dplyr::filter(str_detect(GeneName, "CD8"))
+head(top_probes)
+"BATF3", "CD8A", "TIA1", "CD3G", "ARF6", "GZMB", "CD5", "CD6", "CD86", "ZCCHC12", "SLAMF7", "PDCD1", "CD69", "CD28", "CD3D", "PRF1", "NFATC1"
+SLAMF7, CXCL13, GZMB, CTSS
+
+set_genes = c("CD8A", "CD4", "CTSS", "CTSB", "BATF3", "CD86", "CTLA4", "STAT1", "IFNG","IFI30", "CTSB", "CD28", "CD4", "KLRC2", "KLRC3", "KLRC4", "KLRD1", "KLRK1", "TBX21", "ATP6V1B2", "ATP6V0A2", "ID2", "RAB11FIP5", "LAP3")
+
+top_genes |>
+  dplyr::filter(GeneName =="CCR7") |>
+  arrange(desc(ATLL_vs_ENKTL))
+
+top_genes$GeneName
+top_probes
+#--------------------------------------------------------
+# Part 4C: Subevaluation using a heatmap
+#--------------------------------------------------------
+##### more than 2 folds to ATL 
+x2genes = top_probes |>
+  dplyr::filter(adj.P.Val<0.05) |>
+  tibble::rownames_to_column("ProbeID") |>
+  pull(ProbeID)
+#(abs(ATLL_vs_PTCLTBX) + abs(ATLL_vs_PTCLGATA)+ abs(ATLL_vs_ENKTL)+abs(ATLL_vs_AITL) + abs(ATLL_vs_ALCLpos) + abs(ATLL_vs_ALCLneg)) >  6, 
+x2genes
+
+id_to_symbol <- fData(normalized_matrix) %>%
+  tibble::rownames_to_column("ProbeID") %>%
+  dplyr::filter(ProbeID %in% x2genes) %>%
+  dplyr::select(ProbeID, GeneName) %>%
+  dplyr::arrange(match(ProbeID, x2genes))
+
+newids = c("BATF3", "PRF1", "NFATC1", "IFNG", "SLAMF7", "CD6", "STAT1", "TIAM2", "CD3D", "CD28", "CD3G",   "CTLA4", "EOMES", "CD8A", "CD69", "CD5", "CD86", "CD244", "TARP", "GZMB", "PDCD1")
+
+id_to_symbol
+x2matrix = exprs(normalized_matrix)[x2genes,] |>
+  as.data.frame() |>
+  tibble::rownames_to_column("ProbeID") |>
+  dplyr::left_join(id_to_symbol, by="ProbeID") |>
+  dplyr::filter(GeneName %in% newids) |>
+  tibble::column_to_rownames("GeneName") |>
+  dplyr::select(-ProbeID) |>
+  as.matrix()
+
+ZCCH12 = exprs(normalized_matrix) |>
+  as.data.frame() |>
+  tibble::rownames_to_column("ProbeID") |>
+  dplyr::filter(str_detect(ProbeID, "TAX|HBZ|EBER|ZCCHC12|CADM1")) |>
+  tibble::column_to_rownames("ProbeID") |>
+  t() |>
+  as.data.frame() 
+
+colnames(ZCCH12)
+
+ZCCH12 <- ZCCH12 %>%
+  dplyr::rename(ZCCHC12 = 1, TAX = 2, HBZ = 3, HBZv = 4, EBER = 5, CADM1=6)
+
+tidyplots::tidyplot(data=ZCCH12, x=ZCCHC12, y=HBZv) |>
+tidyplots::add_data_points() |>
+tidyplots::add_test_pvalue()
+  
+viral_cor <- cor(ZCCH12, method = "spearman", use = "complete.obs")
+print(viral_cor)
+
+
+
+
+pd7=training |>
+  mutate(Neoplasm=case_when(
+    final_subtype == "ALCLneg" ~ "ALCL-ALK(-)",
+    final_subtype == "ALCLpos" ~ "ALCL-ALK(+)",
+    final_subtype == "AITL" ~ "AITL",
+    final_subtype == "PTCLGATA" ~ "PTCL-GATA3+",
+    final_subtype == "PTCLTBX" ~ "PTCL-TBX+",
+    final_subtype == "ENKTL" ~ "ENKTCL",
+    final_subtype == "ATLL" ~ "ATLL",
+    .default="PTCL-NOS"
+  ))
+
+annotation_data <- data.frame(
+  Neoplasm = pd7$Neoplasm,
+  row.names = rownames(pd7) 
+)
+
+dim(annotation_data)
+pheatmap(
+    mat = x2matrix ,
+    scale = "row",
+    annotation_col = annotation_data,
+    show_rownames = TRUE,
+    show_colnames = FALSE,
+    cellheight=20,
+    main = "Gene expression signature across T-cell Neoplasms ",
+    filename = "2506_v3CD8_across_allheatmap.png",
+    width = 15,  
+    height = 15,
+    fontsize=14,
+    units = "in",
+    family = "Arial",
+)
+
+#--------------------------------------------------------
+# Part 3A: Validation data 1
+#--------------------------------------------------------          
+######### Part 2 - Validation data 167 features
+#########
+validation = metadata |>
+  dplyr::filter(str_detect(file, "Validation"), !(file%in%bad_files))
+
+validation_set <- readNanoStringRccSet(
+  rccFiles = file.path(".temp", id, validation$file))
+
+validation2 = metadata |>
+  dplyr::filter(str_detect(file, "Validation"), file%in%bad_files)
+validation_set2 = readNanoStringRccSet(
+  rccFiles = file.path(".temp", id, validation2$file))
+#--------------------------------------------------------
+# Part 4: Normalization 
+#--------------------------------------------------------
+
+norm_data2 <- normalize(validation_set,
+                      "Housekeeping-Log2")
+norm_data2e <- log2(exprs(norm_data2) + 1)
+
+norm_data3 <- normalize(validation_set2,
+                      "Housekeeping-Log2")
+norm_data3e <- log2(exprs(norm_data3) + 1)
+
+
+cd8sign = c("CD8A", "CD8B", "GZMB", "GZMA", "GZMH", "PRF1", 
+"IFNG", "EOMES", "TBX21", "KLRG1", "CCL5", "NKG7", "IL2RB")
+
+
+
+whole = cbind(norm_data1e[idgenes,], norm_data2e[idgenes,], norm_data3e[idgenes,])
+
+whole_matrix = whole   |>
+  as.data.frame() |>
+  tibble::rownames_to_column("ID") |>
+  left_join(metadata_cd8[, c( "ID", "GeneName")]) |>
+  dplyr::select(-ID) |>
+  rename_with(~str_replace(., "_.*$", "")) |>
+  tibble::column_to_rownames("GeneName") |>
+  as.matrix()
+
+
+pd7=metadata |>
+  mutate(Neoplasm=case_when(
+    final_subtype == "ALCLneg" ~ "ALCL-ALK(-)",
+    final_subtype == "ALCLpos" ~ "ALCL-ALK(+)",
+    final_subtype == "AITL" ~ "AITL",
+    final_subtype == "PTCLGATA" ~ "PTCL-GATA3+",
+    final_subtype == "PTCLTBX" ~ "PTCL-TBX+",
+    final_subtype == "ENKTL" ~ "ENKTCL",
+    final_subtype == "ATLL" ~ "ATLL",
+    .default="PTCL-NOS"
+  ))
+
+annotation_data <- data.frame(
+  Neoplasm = pd7$Neoplasm,
+  row.names = rownames(pd7) 
+)
+pd7
+annotation_data
+pheatmap(
+    mat = whole_matrix ,
+    scale = "row",
+    annotation_col = annotation_data,
+    show_rownames = TRUE,
+    show_colnames = FALSE,
+    cellheight=20,
+    main = "CD8 expression signature across T-cell Neoplasms ",
+    filename = "2505_CD8_across_allheatmap.png",
+    width = 15,  
+    height = 7,
+    units = "in",
+    family = "Arial",
+)
+
+
+
+cd8_matrix <- norm_data[fData(norm_data)[["GeneName"]] %in% cd8sign, ]
+cd8_matrix = log2(exprs(cd8_matrix) + 1)
+
+
+cd8_matrix = cd8_matrix |>
+  as.data.frame() |>
+  tibble::rownames_to_column("ID") |>
+  left_join(metadata_cd8[, c( "ID", "GeneName")]) |>
+  dplyr::select(-ID) |>
+  rename_with(~str_replace(., "_.*$", "")) |>
+  tibble::column_to_rownames("GeneName") |>
+  as.matrix()
+
+
+
+pd7_ordered <- pd7[match(colnames(cd8_matrix), rownames(pd7)), ]
+
+
+annotation_data <- data.frame(
+  Neoplasm = pd7_ordered$Neoplasm,
+  row.names = rownames(pd7_ordered) 
+)
+pheatmap(
+    mat = cd8_matrix ,
+    scale = "row",
+    annotation_col = annotation_data,
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+    cellheight=20,
+    main = "CD8 Signature across Skin Lesions from ATL and MF",
+    filename = "2505_CD8_acrossheatmap.png",
+    width = 15,  # Nature standard single-column
+    height = 7,
+    fontsize=15,
+    units = "in",
+    family = "Arial"
+)
+
+############## Training_set only 457 characteristics
+# nCounter normalization by Housekeeping
+norm_data <- normalize(training_set,
+                      "Housekeeping-Log2")
+
+# Adding metadata
+pData(norm_data) = pData(norm_data) |>
+  tibble::rownames_to_column("file") |>
+  left_join(metadata, by="file") |>
+  tibble::column_to_rownames("geo_accession")
+
+# Exploring
+norm_data
+pData(norm_data)
+exprs(norm_data)
+
+# Is it normalized?
+isLog2Transformed(assayData(norm_data)$exprs)
+table(pData(norm_data)$final_subtype)
+
+norm_data <- log2(exprs(norm_data) + 1)
+
+# Matrix Design
+design <- model.matrix(~ 0 + factor(pData(norm_data)$final_subtype))
+
+
+rownames(design) <- pData(norm_data)$geo_accession
+colnames(design) <- levels(factor(pData(norm_data)$final_subtype))
+head(design, 20)
+
+# Make contrasts (adjust based on your comparisons)
+colnames(design)
+contrast.matrix <- makeContrasts(
+  ATLL_vs_PTCLTBX = ATLL - PTCLTBX,
+  ATLL_vs_PTCLGATA = ATLL - PTCLGATA,
+  ATLL_vs_ENKTL = ATLL - ENKTL,
+  ATLL_vs_AITL = ATLL - AITL,
+  ATLL_vs_ALCLpos = ATLL - ALCLpos,
+  ATLL_vs_ALCLneg = ATLL - ALCLneg,
+  ATLL_vs_iAITLGATA = ATLL - iAITLGATA3,
+  ATLL_vs_iAITLTBX = ATLL - iAITLTBX21,
+  levels = design
+)
+
+fit2 <- lmFit(norm_data, design) %>%
+    contrasts.fit(contrast.matrix) %>%
+    eBayes()
+
+top_probes <- topTable(fit2, number = Inf,  adjust.method = "BH", sort.by = "ATLL_vs_PTCLTBX", p.value = 0.05)
+top_probes
+top_probes |>
+    arrange(desc(ATLL_vs_PTCLTBX))  |>
+    tibble::rownames_to_column("ID")|>
+    filter(str_detect(ID, "CD5|CD6"))
+
+
+
+
+### exprs(gset) <- log2(exprs(gset))
+boxplot(exprs(gset),outline=FALSE)
+isLog2Transformed(exprs(gset))
+summary(exprs(gset)) ## we have here NAs
+
+# Pivot Longer for manipulation
+colnames(gset)
+exprs_long <- exprs(gset) |> 
+  as.data.frame() |> 
+  tibble::rownames_to_column("ProbeID") |> 
+  pivot_longer(
+    cols = -ProbeID,
+    names_to = "Sample", 
+    values_to = "Expression",
+    values_drop_na = TRUE 
+  ) |>
+  filter(Sample%in%atl_ptcl_geo) 
+
+# Corrected pivot_wider syntax
+exprs_wider <- exprs_long |>
+  pivot_wider(
+    id_cols = ProbeID,
+    names_from = Sample,
+    values_from = Expression
+  )
+
+fig=exprs_wider |>
+  filter(ProbeID == "IL13RA1") |>
+  pivot_longer(
+    cols = -ProbeID,
+    names_to = "Sample", 
+    values_to = "Expression",
+    values_drop_na = TRUE 
+  ) |>
+  left_join(atl_ptcl, by=c("Sample"="geo_accession")) |>
+  group_by(final_subtype) |>
+  summarise(
+    median_expression = median(Expression, na.rm = TRUE),
+    n_samples = n()
+  )
+  tidyplots::tidyplot(x=final_subtype, y=Expression, color=final_subtype) |>
+  tidyplots::add_data_points()
+
+print(fig)
+
+
+
+##  Convert to matrix
+exprs_matrix <- exprs_wider |>
+  column_to_rownames("ProbeID") |>
+  as.matrix() 
+## Removing NAs rows
+exprs_clean <- exprs_matrix[complete.cases(exprs_matrix), ]
+
+exprs_clean
+sum(is.na(exprs_clean)) # return 0 after removing NAs
+
+
+```
+
+
+```{r}
+########## initial visualization
+boxplot(exprs_clean,outline=FALSE)
+
+##### Heatmap
+## argument use="c" stops an error if there are any missing data points
+corMatrix <- cor(exprs_clean,use="c")
+pheatmap(corMatrix)    
+
+## Include metadata
+rownames(atl_ptcl) <- colnames(corMatrix)
+pheatmap(corMatrix,
+         annotation_col=atl_ptcl |> select(final_subtype)) 
+
+##### PCA
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+
+pca <- prcomp(t(exprs_clean))
+
+# No outliers or remove them, gse <- gse[,-outlier_samples]
+pca$x |>
+  as.data.frame() |>
+  tibble::rownames_to_column(var="row_id") |>
+  left_join(atl_ptcl, by=c("row_id"="geo_accession")) |>
+  tidyplots::tidyplot(x=PC1, y=PC2, color=final_subtype) |>
+  tidyplots::add_data_points()
+
+rownames(pca$x)
+
+### Save it, but possible to modify
+full_output <- cbind(fData(gset),exprs(gset))
+write_csv(full_output, path="gse_full_output.csv")
+
+# to check if there is annotation?
+rownames(fData(gset))
+```
+
+
+```{r}
+# First perform differential expression analysis to find significant probes
+library(limma)
+
+# Create design matrix based on final_subtype
+design <- model.matrix(~0 + factor(atl_ptcl$final_subtype))
+
+
+# remove low expressing geneS
+cutoff <- median(exprs_clean)
+cutoff
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- exprs_clean > cutoff
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+gse <- exprs_clean[keep,]
+gse
+rownames(design) = atl_ptcl$geo_accession
+
+colnames(design) <- levels(factor(atl_ptcl$final_subtype))
+head(design)
+
+# Sanity check
+all(colnames(gse) == rownames(design))
+colnames(gse)
+rownames(gse)
+
+# Fit linear model
+fit <- lmFit(gse, design)
+
+# Make contrasts (adjust based on your comparisons)
+levels(factor(atl_ptcl$final_subtype))
+contrast.matrix <- makeContrasts(
+  ATLL_vs_PTCLTBX = ATLL - PTCLTBX,
+  ATLL_vs_PTCLGATA = ATLL - PTCLGATA,
+  ATLL_vs_ENKTL = ATLL - ENKTL,
+  ATLL_vs_AITL = ATLL - AITL,
+  ATLL_vs_ALCLpos = ATLL - ALCLpos,
+  ATLL_vs_ALCLneg = ATLL - ALCLneg,
+  ATLL_vs_iAITLGATA = ATLL - iAITLGATA3,
+  ATLL_vs_iAITLTBX = ATLL - iAITLTBX21,
+  levels = design
+)
+
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)
+fit2
+
+# Get significant probes (FDR < 0.01)
+top_probes <- topTable(fit2, number = Inf,  adjust.method = "BH", sort.by = "B") #p.value = 0.01,
+top_probes |>
+    arrange( "adj.P.Val"  ) |>
+    head(50)
+colnames(top_probes)
+
+ggplot(top_probes,aes(x = ATLL_vs_PTCLTBX, y=F)) + geom_point()
+
+## change according to your needs
+p_cutoff <- 0.01
+fc_cutoff <- 1
+topN <- 10
+
+top_probes %>% 
+  mutate(Significant = adj.P.Val < p_cutoff, abs(ATLL_vs_PTCLTBX) > fc_cutoff ) %>% 
+  ggplot(aes(x = ATLL_vs_PTCLTBX, y = F, col=Significant)) + geom_point()
+
+colnames(topTable(fit2, coef = "ATLL_vs_PTCLTBX", sort.by = "B", number = Inf))
+# Example: Get logFC and B for ATLL vs iAITL-GATA
+topTable(fit2, coef = "ATLL_vs_PTCLTBX", sort.by = "B", number = Inf) |>
+  tibble::rownames_to_column("ID") |>
+  mutate(Significant = adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff )|>
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID,"")) %>% 
+  ggplot(aes(x = logFC, y =B, col=Significant, label=Label)) + geom_point() + geom_text_repel(col="black")
+
+library(readr)
+filter(top_probes, adj.P.Val < 0.05, abs(logFC) > 1) %>%
+  write_csv(path="filtered_de_results.csv")
+
+
+## Use to top 20 genes for illustration
+topN <- 20
+##
+fullr = topTable(fit2, coef = "ATLL_vs_PTCLTBX", sort.by = "B", number = Inf) |>
+  tibble::rownames_to_column("ID")
+fullr 
+ids_of_interest <- mutate(fullr, Rank = 1:n()) %>% 
+  filter(Rank < topN) %>% 
+  pull(ID)
+ids_of_interest
+exp_heat = exprs_clean[ids_of_interest,]
+
+# gen differences across the dataset
+pheatmap(exp_heat, scale="row")
+
+# Filter expression data for significant probes only
+exprs_sig <- exprs_long %>%
+  left_join(metadata, by = c("Sample" = "geo_accession")) %>%
+  filter(ProbeID %in% rownames(top_probes)) |>
+  filter(final_subtype =="ATLL") 
+
+# Create the plot with statistical testing
+d = exprs_sig %>%
+  tidyplots::tidyplot(x = ProbeID, y = Expression) |>
+  tidyplots::add_median_dot()
+d 
+```
+
+
+```{r}
+my_genes <- c("HIG2", "CA1","ETV4","FOXA1")
+
+anno <- AnnotationDbi::select(org.Hs.eg.db, 
+                              columns=c("ENSEMBL","GO"),
+                              keys=my_genes,
+                              keytype = "SYMBOL")
+
+
+pacman::p_load(tidyverse, tidyplots)  
+
+toptable=read_csv("2506_top_probes_annotated_results.csv")
+colnames(toptable)
+db= toptable |>
+  pivot_longer(cols=c("ATLL_vs_PTCLTBX","ATLL_vs_PTCLGATA", "ATLL_vs_ENKTL","ATLL_vs_AITL","ATLL_vs_ALCLpos","ATLL_vs_ALCLneg"), names_to = "TCL", values_to = "Exp") |>
+  arrange(desc(Exp)) #|>
+  head(20)
+db
+  head(10) |>
+  as.data.frame() #
+db = db |>
+  dplyr::rename(symbol="GeneName.x",
+    pvalue="adj.P.Val") |>
+    filter(symbol %in% c("EBER", "CCR4", "ZCCHC12", "UST", "TIAM2", "CD6", "FGF18"))
+colnames(db)
+circle = ggplot(db, aes(x=TCL, forcats::fct_rev(symbol), fill = log(pvalue), size = Exp)) +
+  geom_point(shape = 21, stroke = 0) +
+  geom_hline(yintercept = seq(.5, 4.5, 1), linewidth = .2) +
+  scale_x_discrete(position = "top") +
+  scale_radius(range = c(1, 15), aes(size=Exp)) +
+  scale_fill_gradient(low = "orange", high = "blue") +
+  theme_minimal() +
+  theme(legend.position = "bottom", 
+        panel.grid.major = element_blank(),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(size = 8)) +
+  guides(size = guide_legend(override.aes = list(fill = NA, color = "black", stroke = .25), 
+                             label.position = "bottom",
+                             title.position = "right", 
+                             order = 1),
+         fill = guide_colorbar(ticks.colour = NA, title.position = "top", order = 2)) +
+  labs(size = "Log(FC)", fill = "-Log(p-value):", x = NULL, y = NULL) 
+ggsave("circles.png", circle, dpi=600)
+  tidyplot(x=TCL, y=GeneName.x) |>
+  tidyplots::add_mean_dot()
+```
+
+https://github.com/kassambara/survminer
+https://sbc.shef.ac.uk/geo_tutorial/tutorial.nb.html#Introduction
